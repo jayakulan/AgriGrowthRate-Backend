@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const { register, login, logout, getMe, googleLogin } = require('../controllers/authController');
+const { register, login, logout, getMe, googleLogin, sendOtp } = require('../controllers/authController');
 const { protect } = require('../middleware/authMiddleware');
 
 router.post('/register', register);
+router.post('/send-otp', sendOtp);
 router.post('/login', login);
 router.post('/google', googleLogin);
 router.post('/logout', protect, logout);

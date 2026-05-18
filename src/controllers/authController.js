@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const OtpVerification = require('../models/OtpVerification');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 
@@ -18,11 +19,32 @@ const generateTokens = (userId) => {
 // @route POST /api/auth/register
 exports.register = async (req, res, next) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, phone, otp } = req.body;
     const existing = await User.findOne({ email });
     if (existing) return res.status(400).json({ success: false, message: 'Email already registered' });
 
-    const user = await User.create({ name, email, password, role });
+    // Verify OTP
+    if (!phone || !otp) {
+      return res.status(400).json({ success: false, message: 'Phone number and verification OTP are required' });
+    }
+
+    // Standardize Sri Lankan phone number format to match saved database state
+    let formattedPhone = phone.trim().replace(/[\s\-\+\(\)]/g, ''); 
+    if (formattedPhone.startsWith('0')) {
+      formattedPhone = '94' + formattedPhone.slice(1);
+    } else if (!formattedPhone.startsWith('94') && formattedPhone.length === 9) {
+      formattedPhone = '94' + formattedPhone;
+    }
+
+    const record = await OtpVerification.findOne({ phone: formattedPhone, otp });
+    if (!record) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired verification OTP' });
+    }
+
+    // Delete OTP verification record once used
+    await OtpVerification.deleteMany({ phone: formattedPhone });
+
+    const user = await User.create({ name, email, password, role, phone: formattedPhone, isVerified: true });
     const { accessToken, refreshToken } = generateTokens(user._id);
     user.refreshToken = refreshToken;
     await user.save();
@@ -30,7 +52,7 @@ exports.register = async (req, res, next) => {
     res.status(201).json({
       success: true,
       message: 'Registration successful',
-      data: { _id: user._id, name: user.name, email: user.email, role: user.role },
+      data: { _id: user._id, name: user.name, email: user.email, role: user.role, phone: user.phone },
       accessToken,
       refreshToken,
     });
@@ -167,5 +189,102 @@ exports.googleLogin = async (req, res, next) => {
   } catch (error) {
     console.error('Google Auth Error:', error);
     res.status(401).json({ success: false, message: 'Google authentication failed', error: error.message });
+  }
+};
+
+// @desc  Send OTP to user's phone for verification
+// @route POST /api/auth/send-otp
+exports.sendOtp = async (req, res, next) => {
+  try {
+    const { phone, email } = req.body;
+    if (!phone) {
+      return res.status(400).json({ success: false, message: 'Phone number is required' });
+    }
+
+    // Standardize Sri Lankan phone number format (e.g. 0771234567 or +94771234567 -> 94771234567)
+    let formattedPhone = phone.trim().replace(/[\s\-\+\(\)]/g, ''); // Remove spaces, symbols, plus signs
+    if (formattedPhone.startsWith('0')) {
+      formattedPhone = '94' + formattedPhone.slice(1);
+    } else if (!formattedPhone.startsWith('94') && formattedPhone.length === 9) {
+      formattedPhone = '94' + formattedPhone;
+    }
+
+    // Check if email already exists
+    if (email) {
+      const existingEmail = await User.findOne({ email });
+      if (existingEmail) {
+        return res.status(400).json({ success: false, message: 'Email already registered' });
+      }
+    }
+
+    // Check if phone already exists
+    const existingPhone = await User.findOne({ phone: formattedPhone });
+    if (existingPhone) {
+      return res.status(400).json({ success: false, message: 'Phone number already registered' });
+    }
+
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Save to database (overwrite previous OTPs for same phone)
+    await OtpVerification.deleteMany({ phone: formattedPhone });
+    await OtpVerification.create({ phone: formattedPhone, otp });
+
+    // Send SMS via text.lk API
+    const smsUrl = process.env.TEXT_LK_API_URL;
+    const smsToken = process.env.TEXT_LK_API_TOKEN;
+    const senderId = process.env.TEXT_LK_SENDER_ID;
+
+    if (!smsUrl || !smsToken || !senderId) {
+      console.error('[SMS Gateway Error] SMS service environment variables are missing (TEXT_LK_API_URL, TEXT_LK_API_TOKEN, TEXT_LK_SENDER_ID).');
+      return res.status(500).json({
+        success: false,
+        message: 'SMS Gateway is not configured inside the server environment files.'
+      });
+    }
+
+    try {
+      const smsResponse = await fetch(smsUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${smsToken}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          recipient: formattedPhone,
+          sender_id: senderId,
+          type: 'plain',
+          message: `Your AgriGrowthRate verification OTP is ${otp}. Valid for 10 minutes.`
+        })
+      });
+
+      const smsData = await smsResponse.json();
+      console.log(`[SMS Gateway Response]`, smsData);
+
+      // Check for API-specific error flags
+      if (!smsResponse.ok || smsData.success === false || smsData.status === 'error') {
+        const errMsg = smsData.message || `SMS gateway failed with status ${smsResponse.status}`;
+        return res.status(400).json({
+          success: false,
+          message: `SMS Gateway Error: ${errMsg}. Please check your Sender ID and balance.`
+        });
+      }
+    } catch (smsErr) {
+      console.error('Error contacting Text.lk Gateway API:', smsErr);
+      return res.status(500).json({
+        success: false,
+        message: 'Could not connect to SMS gateway. Please try again later.'
+      });
+    }
+
+    console.log(`[SMS OTP Debug Log] Sent to ${formattedPhone}: ${otp}`);
+
+    res.json({
+      success: true,
+      message: 'Verification OTP sent to your phone number'
+    });
+  } catch (error) {
+    next(error);
   }
 };
