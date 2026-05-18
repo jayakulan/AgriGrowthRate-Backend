@@ -1,0 +1,6 @@
+ai-model/
+*.log
+node_modules/
+.env
+uploads/
+.DS_Store
