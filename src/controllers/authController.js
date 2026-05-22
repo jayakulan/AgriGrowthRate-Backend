@@ -20,7 +20,8 @@ const generateTokens = (userId) => {
 exports.register = async (req, res, next) => {
   try {
     const { name, email, password, role, phone, otp } = req.body;
-    const existing = await User.findOne({ email });
+    const normalizedEmail = email ? email.trim().toLowerCase() : '';
+    const existing = await User.findOne({ email: normalizedEmail });
     if (existing) return res.status(400).json({ success: false, message: 'Email already registered' });
 
     // Verify OTP
@@ -66,7 +67,11 @@ exports.register = async (req, res, next) => {
 exports.login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
-    const user = await User.findOne({ email });
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: 'Email and password are required' });
+    }
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
     if (!user || !(await user.matchPassword(password))) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
