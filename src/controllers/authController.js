@@ -74,7 +74,8 @@ exports.logout = async (req, res, next) => {
     const clearCookieOptions = {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'Lax',
+      sameSite: 'strict',
+      path: '/',
       expires: new Date(0),
     };
 
