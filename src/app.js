@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const cookieParser = require('cookie-parser');
 const connectDB = require('./config/db');
 const errorHandler = require('./middleware/errorHandler');
 
@@ -17,6 +18,7 @@ connectDB();
 const app = express();
 
 // Security & middleware
+app.use(cookieParser());
 app.use(helmet());
 
 const allowedOrigins = process.env.FRONTEND_URL

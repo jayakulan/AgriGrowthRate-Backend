@@ -2,18 +2,9 @@ const User = require('../models/User');
 const OtpVerification = require('../models/OtpVerification');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
+const { sendTokenResponse } = require('../utils/cookies');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-
-const generateTokens = (userId) => {
-  const accessToken = jwt.sign({ id: userId }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRE || '15m',
-  });
-  const refreshToken = jwt.sign({ id: userId }, process.env.JWT_REFRESH_SECRET, {
-    expiresIn: '7d',
-  });
-  return { accessToken, refreshToken };
-};
 
 // @desc  Register a new user
 // @route POST /api/auth/register
@@ -46,17 +37,7 @@ exports.register = async (req, res, next) => {
     await OtpVerification.deleteMany({ phone: formattedPhone });
 
     const user = await User.create({ name, email, password, role, phone: formattedPhone, isVerified: true });
-    const { accessToken, refreshToken } = generateTokens(user._id);
-    user.refreshToken = refreshToken;
-    await user.save();
-
-    res.status(201).json({
-      success: true,
-      message: 'Registration successful',
-      data: { _id: user._id, name: user.name, email: user.email, role: user.role, phone: user.phone },
-      accessToken,
-      refreshToken,
-    });
+    sendTokenResponse(user, 201, res);
   } catch (error) {
     next(error);
   }
@@ -76,17 +57,7 @@ exports.login = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
-    const { accessToken, refreshToken } = generateTokens(user._id);
-    user.refreshToken = refreshToken;
-    await user.save();
-
-    res.json({
-      success: true,
-      message: 'Login successful',
-      data: { _id: user._id, name: user.name, email: user.email, role: user.role },
-      accessToken,
-      refreshToken,
-    });
+    sendTokenResponse(user, 200, res);
   } catch (error) {
     next(error);
   }
@@ -96,7 +67,21 @@ exports.login = async (req, res, next) => {
 // @route POST /api/auth/logout
 exports.logout = async (req, res, next) => {
   try {
-    await User.findByIdAndUpdate(req.user.id, { refreshToken: '' });
+    if (req.user) {
+      await User.findByIdAndUpdate(req.user.id, { refreshToken: '' });
+    }
+    
+    const clearCookieOptions = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      path: '/',
+      expires: new Date(0),
+    };
+
+    res.cookie('accessToken', '', clearCookieOptions);
+    res.cookie('refreshToken', '', clearCookieOptions);
+
     res.json({ success: true, message: 'Logged out successfully' });
   } catch (error) {
     next(error);
@@ -152,20 +137,10 @@ exports.googleLogin = async (req, res, next) => {
 
     if (user) {
       // User exists, login
-      const { accessToken: jwtAccess, refreshToken } = generateTokens(user._id);
-      user.refreshToken = refreshToken;
       if (picture && !user.avatar) {
         user.avatar = picture;
       }
-      await user.save();
-
-      return res.json({
-        success: true,
-        message: 'Google login successful',
-        data: { _id: user._id, name: user.name, email: user.email, role: user.role, avatar: user.avatar },
-        accessToken: jwtAccess,
-        refreshToken,
-      });
+      sendTokenResponse(user, 200, res);
     } else {
       // Create new user (register)
       const generatedPassword = Math.random().toString(36).slice(-10) + 'A1!';
@@ -179,17 +154,7 @@ exports.googleLogin = async (req, res, next) => {
         role: 'consumer',
       });
 
-      const { accessToken: jwtAccess, refreshToken } = generateTokens(user._id);
-      user.refreshToken = refreshToken;
-      await user.save();
-
-      return res.status(201).json({
-        success: true,
-        message: 'Google registration successful',
-        data: { _id: user._id, name: user.name, email: user.email, role: user.role, avatar: user.avatar },
-        accessToken: jwtAccess,
-        refreshToken,
-      });
+      sendTokenResponse(user, 201, res);
     }
   } catch (error) {
     console.error('Google Auth Error:', error);
@@ -291,5 +256,27 @@ exports.sendOtp = async (req, res, next) => {
     });
   } catch (error) {
     next(error);
+  }
+};
+
+// @desc  Refresh access token
+// @route POST /api/auth/refresh
+exports.refresh = async (req, res, next) => {
+  try {
+    const token = req.cookies.refreshToken;
+    if (!token) {
+      return res.status(401).json({ success: false, message: 'Not authorized, no refresh token' });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
+    const user = await User.findById(decoded.id);
+
+    if (!user || user.refreshToken !== token) {
+      return res.status(401).json({ success: false, message: 'Invalid or expired refresh token' });
+    }
+
+    sendTokenResponse(user, 200, res);
+  } catch (error) {
+    return res.status(401).json({ success: false, message: 'Not authorized, token refresh failed' });
   }
 };
