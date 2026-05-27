@@ -4,7 +4,7 @@ require('dotenv').config();
 
 const seedAdminUser = async () => {
   try {
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/agrigrowthrate');
+    await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/agrigrowthrate');
     
     // Check if admin already exists
     const adminExists = await User.findOne({ email: 'admin@gmail.com' });
