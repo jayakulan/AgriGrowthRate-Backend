@@ -80,6 +80,7 @@ exports.logout = async (req, res, next) => {
     };
 
     res.cookie('accessToken', '', clearCookieOptions);
+    res.cookie('jwt', '', clearCookieOptions);
     res.cookie('refreshToken', '', clearCookieOptions);
 
     res.json({ success: true, message: 'Logged out successfully' });
@@ -280,3 +281,21 @@ exports.refresh = async (req, res, next) => {
     return res.status(401).json({ success: false, message: 'Not authorized, token refresh failed' });
   }
 };
+
+// @desc  Update current logged-in user profile
+// @route PUT /api/auth/profile
+exports.updateProfile = async (req, res, next) => {
+  try {
+    const { name, phone, address, avatar } = req.body;
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { name, phone, address, avatar },
+      { new: true }
+    ).select('-password -refreshToken');
+
+    res.json({ success: true, data: user, message: 'Profile updated successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
