@@ -31,6 +31,7 @@ const sendTokenResponse = (user, statusCode, res) => {
   };
 
   res.cookie('accessToken', accessToken, accessCookieOptions);
+  res.cookie('jwt', accessToken, accessCookieOptions);
   res.cookie('refreshToken', refreshToken, refreshCookieOptions);
 
   // Update refresh token in DB
