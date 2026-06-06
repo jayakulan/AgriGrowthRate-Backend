@@ -299,3 +299,14 @@ exports.updateProfile = async (req, res, next) => {
   }
 };
 
+// @desc  Deactivate current user account
+// @route DELETE /api/auth/profile
+exports.deactivateAccount = async (req, res, next) => {
+  try {
+    await User.findByIdAndDelete(req.user.id);
+    res.json({ success: true, message: 'Account deactivated successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
