@@ -23,6 +23,25 @@ exports.getProducts = async (req, res, next) => {
   }
 };
 
+// @desc  Get logged-in farmer's own products
+// @route GET /api/products/my
+exports.getMyProducts = async (req, res, next) => {
+  try {
+    const { category, status, search } = req.query;
+    const query = { farmer: req.user.id };
+    if (category && category !== 'All') query.category = category.toLowerCase();
+    if (status === 'Active') query.isAvailable = true;
+    if (status === 'Out of Stock') { query.stock = 0; query.isAvailable = false; }
+    if (status === 'Draft') query.isAvailable = false;
+    if (search) query.name = { $regex: search, $options: 'i' };
+
+    const products = await Product.find(query).sort('-createdAt');
+    res.json({ success: true, total: products.length, data: products });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc  Get single product
 // @route GET /api/products/:id
 exports.getProduct = async (req, res, next) => {

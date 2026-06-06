@@ -11,6 +11,7 @@ const productSchema = new mongoose.Schema(
       required: true,
     },
     images: [{ type: String }],
+    isOrganic: { type: Boolean, default: false },
     stock: { type: Number, default: 0, min: 0 },
     unit: { type: String, default: 'kg' },
     farmer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
