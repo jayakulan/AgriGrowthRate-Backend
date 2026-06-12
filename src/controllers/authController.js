@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const OtpVerification = require('../models/OtpVerification');
+const FarmerCard = require('../models/FarmerCard');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const { sendTokenResponse } = require('../utils/cookies');
@@ -10,7 +11,7 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 // @route POST /api/auth/register
 exports.register = async (req, res, next) => {
   try {
-    const { name, email, password, role, phone, otp } = req.body;
+    const { name, email, password, role, phone, otp, farmerCardNo } = req.body;
     const normalizedEmail = email ? email.trim().toLowerCase() : '';
     const existing = await User.findOne({ email: normalizedEmail });
     if (existing) return res.status(400).json({ success: false, message: 'Email already registered' });
@@ -35,6 +36,26 @@ exports.register = async (req, res, next) => {
 
     // Delete OTP verification record once used
     await OtpVerification.deleteMany({ phone: formattedPhone });
+
+    // Validate Farmer Card Number
+    if (role === 'farmer') {
+      if (!farmerCardNo) {
+        return res.status(400).json({ success: false, message: 'Farmer Card Number is required for farmer registration' });
+      }
+      
+      const farmerCard = await FarmerCard.findOne({ cardNumber: farmerCardNo.trim() });
+      if (!farmerCard) {
+        return res.status(400).json({ success: false, message: 'Invalid Farmer Card Number' });
+      }
+      
+      if (farmerCard.isRegistered) {
+        return res.status(400).json({ success: false, message: 'This Farmer Card Number is already registered' });
+      }
+      
+      // Mark card as registered
+      farmerCard.isRegistered = true;
+      await farmerCard.save();
+    }
 
     const user = await User.create({ name, email, password, role, phone: formattedPhone, isVerified: true });
     sendTokenResponse(user, 201, res);

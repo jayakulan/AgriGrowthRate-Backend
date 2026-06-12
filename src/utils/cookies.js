@@ -40,6 +40,8 @@ const sendTokenResponse = (user, statusCode, res) => {
 
   res.status(statusCode).json({
     success: true,
+    accessToken,
+    refreshToken,
     data: {
       _id: user._id,
       name: user.name,
