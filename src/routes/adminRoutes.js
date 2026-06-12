@@ -21,6 +21,11 @@ router.patch('/users/:id/status', protect, adminOnly, adminController.updateUser
 router.patch('/users/:id/role', protect, adminOnly, adminController.updateUserRole);
 router.delete('/users/:id', protect, adminOnly, adminController.deleteUser);
 
+// Farmer Cards Management
+router.post('/farmer-cards', protect, adminOnly, adminController.addFarmerCard);
+router.get('/farmer-cards', protect, adminOnly, adminController.getFarmerCards);
+
+
 // Product Management
 router.get('/products', protect, adminOnly, adminController.getAllProducts);
 router.patch('/products/:id/status', protect, adminOnly, adminController.updateProductStatus);

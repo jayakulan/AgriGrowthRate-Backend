@@ -2,6 +2,7 @@ const User = require('../models/User');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
 const Chat = require('../models/Chat');
+const FarmerCard = require('../models/FarmerCard');
 
 // @desc  Get dashboard analytics
 // @route GET /api/admin/analytics
@@ -384,6 +385,38 @@ exports.getActivityLogs = async (req, res, next) => {
     ];
 
     res.json({ success: true, data: activities });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc  Add Farmer Card Number
+// @route POST /api/admin/farmer-cards
+exports.addFarmerCard = async (req, res, next) => {
+  try {
+    const { cardNumber } = req.body;
+    if (!cardNumber) {
+      return res.status(400).json({ success: false, message: 'Card number is required' });
+    }
+
+    const existingCard = await FarmerCard.findOne({ cardNumber: cardNumber.trim() });
+    if (existingCard) {
+      return res.status(400).json({ success: false, message: 'This Card Number already exists' });
+    }
+
+    const newCard = await FarmerCard.create({ cardNumber: cardNumber.trim() });
+    res.status(201).json({ success: true, data: newCard, message: 'Farmer Card Number added successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc  Get all Farmer Cards
+// @route GET /api/admin/farmer-cards
+exports.getFarmerCards = async (req, res, next) => {
+  try {
+    const cards = await FarmerCard.find().sort({ createdAt: -1 });
+    res.json({ success: true, data: cards });
   } catch (error) {
     next(error);
   }
