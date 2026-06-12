@@ -29,6 +29,7 @@ const orderSchema = new mongoose.Schema(
       pincode: String,
       country: { type: String, default: 'India' },
     },
+    orderConfirmationNumber: { type: String, unique: true },
     deliveredAt: { type: Date },
   },
   { timestamps: true }
