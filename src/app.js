@@ -13,6 +13,7 @@ const chatRoutes = require('./routes/chatRoutes');
 const aiRoutes = require('./routes/aiRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const orderRoutes = require('./routes/orderRoutes');
+const subscriptionRoutes = require('./routes/subscriptionRoutes');
 
 // Connect to MongoDB
 connectDB();
@@ -51,6 +52,7 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/orders', orderRoutes);
+app.use('/api/subscriptions', subscriptionRoutes);
 
 // 404 handler
 app.use((req, res) => {

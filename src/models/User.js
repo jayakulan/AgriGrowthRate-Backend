@@ -16,6 +16,10 @@ const userSchema = new mongoose.Schema(
     address: { type: String, default: '' },
     isVerified: { type: Boolean, default: false },
     refreshToken: { type: String, default: '' },
+    freeChatCount: { type: Number, default: 4 }, // AI chat limits
+    isSubscribed: { type: Boolean, default: false },
+    subscriptionExpiry: { type: Date, default: null },
+    stripeCustomerId: { type: String, default: '' },
   },
   { timestamps: true }
 );
