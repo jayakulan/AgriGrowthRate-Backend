@@ -25,6 +25,10 @@ router.post('/', protect, async (req, res, next) => {
         return res.status(404).json({ success: false, message: `Product not found: ${item.product}` });
       }
 
+      if (item.quantity < 10) {
+        return res.status(400).json({ success: false, message: `Minimum purchase quantity is 10 for product ${product.name}` });
+      }
+
       if (product.stock < item.quantity) {
         return res.status(400).json({ success: false, message: `Insufficient stock for product ${product.name}` });
       }
