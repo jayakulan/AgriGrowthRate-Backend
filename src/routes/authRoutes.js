@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { register, login, logout, getMe, googleLogin, sendOtp, refresh, updateProfile, deactivateAccount, updatePassword } = require('../controllers/authController');
+const { register, login, logout, getMe, googleLogin, sendOtp, refresh, updateProfile, deactivateAccount, updatePassword, toggleFavoriteFarmer, getFavoriteFarmers } = require('../controllers/authController');
 const { protect } = require('../middleware/authMiddleware');
 
 router.post('/register', register);
@@ -13,5 +13,7 @@ router.get('/me', protect, getMe);
 router.put('/profile', protect, updateProfile);
 router.put('/update-password', protect, updatePassword);
 router.delete('/profile', protect, deactivateAccount);
+router.post('/favorite-farmer/:id', protect, toggleFavoriteFarmer);
+router.get('/favorite-farmers', protect, getFavoriteFarmers);
 
 module.exports = router;
