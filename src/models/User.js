@@ -14,6 +14,8 @@ const userSchema = new mongoose.Schema(
     avatar: { type: String, default: '' },
     phone: { type: String, default: '' },
     address: { type: String, default: '' },
+    location: { type: String, default: '' },
+    bio: { type: String, default: '' },
     favoriteFarmers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     isVerified: { type: Boolean, default: false },
     refreshToken: { type: String, default: '' },
