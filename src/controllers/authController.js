@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const OtpVerification = require('../models/OtpVerification');
 const FarmerCard = require('../models/FarmerCard');
+const Favorite = require('../models/Favorite');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const { sendTokenResponse } = require('../utils/cookies');
@@ -361,4 +362,45 @@ exports.updatePassword = async (req, res, next) => {
   }
 };
 
+// @desc  Toggle favorite farmer
+// @route POST /api/auth/favorite-farmer/:id
+exports.toggleFavoriteFarmer = async (req, res, next) => {
+  try {
+    const consumerId = req.user.id;
+    const farmerId = req.params.id;
 
+    if (!farmerId) {
+      return res.status(400).json({ success: false, message: 'Farmer ID is required' });
+    }
+
+    const existingFavorite = await Favorite.findOne({ consumerId, farmerId });
+
+    let message = '';
+    let isFavorite = false;
+
+    if (!existingFavorite) {
+      await Favorite.create({ consumerId, farmerId });
+      message = 'Farmer added to favorites';
+      isFavorite = true;
+    } else {
+      await Favorite.findByIdAndDelete(existingFavorite._id);
+      message = 'Farmer removed from favorites';
+      isFavorite = false;
+    }
+
+    res.json({ success: true, message, isFavorite });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc  Get favorite farmers
+// @route GET /api/auth/favorite-farmers
+exports.getFavoriteFarmers = async (req, res, next) => {
+  try {
+    const favorites = await Favorite.find({ consumerId: req.user.id }).populate('farmerId', 'name avatar location address');
+    res.json({ success: true, count: favorites.length, data: favorites });
+  } catch (error) {
+    next(error);
+  }
+};

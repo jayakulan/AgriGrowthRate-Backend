@@ -14,6 +14,7 @@ const productSchema = new mongoose.Schema(
     isOrganic: { type: Boolean, default: false },
     stock: { type: Number, default: 0, min: 0 },
     unit: { type: String, default: 'kg' },
+    totalWeight: { type: Number, default: 0, min: 0 },
     farmer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     rating: { type: Number, default: 0 },
     reviews: [
