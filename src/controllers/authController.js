@@ -58,7 +58,7 @@ exports.register = async (req, res, next) => {
       await farmerCard.save();
     }
 
-    const user = await User.create({ name, email, password, role, phone: formattedPhone, isVerified: true });
+    const user = await User.create({ name, email, password, role, phone: formattedPhone, isVerified: true, farmerCardNo: role === 'farmer' ? farmerCardNo.trim() : '' });
     sendTokenResponse(user, 201, res);
   } catch (error) {
     next(error);
