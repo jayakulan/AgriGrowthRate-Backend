@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Product = require('../models/Product');
 
 // @desc  Get all products (with optional filters)
@@ -17,7 +18,33 @@ exports.getProducts = async (req, res, next) => {
       .sort('-createdAt');
     const total = await Product.countDocuments(query);
 
-    res.json({ success: true, total, page: Number(page), data: products });
+    // Compute farmer average rating dynamically
+    const farmerIds = [...new Set(products.map(p => p.farmer && p.farmer._id.toString()).filter(Boolean))];
+    const Feedback = require('../models/Feedback');
+    const ratings = await Feedback.aggregate([
+      { $match: { reviewee: { $in: farmerIds.map(id => new mongoose.Types.ObjectId(id)) }, reviewerRole: 'consumer' } },
+      { $group: { _id: '$reviewee', avgRating: { $avg: '$rating' }, totalReviews: { $sum: 1 } } }
+    ]);
+
+    const ratingMap = {};
+    ratings.forEach(r => {
+      ratingMap[r._id.toString()] = {
+        avgRating: Math.round(r.avgRating * 10) / 10,
+        totalReviews: r.totalReviews
+      };
+    });
+
+    const productsWithRating = products.map(product => {
+      const prodObj = product.toObject();
+      if (prodObj.farmer) {
+        const ratingInfo = ratingMap[prodObj.farmer._id.toString()] || { avgRating: 0, totalReviews: 0 };
+        prodObj.farmer.avgRating = ratingInfo.avgRating;
+        prodObj.farmer.totalReviews = ratingInfo.totalReviews;
+      }
+      return prodObj;
+    });
+
+    res.json({ success: true, total, page: Number(page), data: productsWithRating });
   } catch (error) {
     next(error);
   }
@@ -70,7 +97,21 @@ exports.getProduct = async (req, res, next) => {
       }
     }
 
-    res.json({ success: true, data: product });
+    // Attach farmer rating
+    const Feedback = require('../models/Feedback');
+    const ratings = await Feedback.aggregate([
+      { $match: { reviewee: product.farmer._id, reviewerRole: 'consumer' } },
+      { $group: { _id: '$reviewee', avgRating: { $avg: '$rating' }, totalReviews: { $sum: 1 } } }
+    ]);
+    
+    const prodObj = product.toObject();
+    if (prodObj.farmer) {
+      const ratingInfo = ratings[0] || { avgRating: 0, totalReviews: 0 };
+      prodObj.farmer.avgRating = Math.round((ratingInfo.avgRating || 0) * 10) / 10;
+      prodObj.farmer.totalReviews = ratingInfo.totalReviews || 0;
+    }
+
+    res.json({ success: true, data: prodObj });
   } catch (error) {
     next(error);
   }
