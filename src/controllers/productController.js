@@ -5,7 +5,7 @@ const Product = require('../models/Product');
 exports.getProducts = async (req, res, next) => {
   try {
     const { category, minPrice, maxPrice, search, page = 1, limit = 12 } = req.query;
-    const query = {};
+    const query = { status: 'Active' };
     if (category) query.category = category;
     if (minPrice || maxPrice) query.price = { $gte: minPrice || 0, $lte: maxPrice || Infinity };
     if (search) query.name = { $regex: search, $options: 'i' };
@@ -48,6 +48,28 @@ exports.getProduct = async (req, res, next) => {
   try {
     const product = await Product.findById(req.params.id).populate('farmer', 'name avatar location phone');
     if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
+    
+    if (product.status !== 'Active') {
+      let isAuthorized = false;
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.split(' ')[1];
+        try {
+          const jwt = require('jsonwebtoken');
+          const decoded = jwt.verify(token, process.env.JWT_SECRET);
+          if (decoded.id === product.farmer._id.toString() || decoded.role === 'admin') {
+            isAuthorized = true;
+          }
+        } catch (err) {
+          // Token validation failed
+        }
+      }
+      
+      if (!isAuthorized) {
+        return res.status(403).json({ success: false, message: 'Product is not approved' });
+      }
+    }
+
     res.json({ success: true, data: product });
   } catch (error) {
     next(error);
@@ -69,9 +91,13 @@ exports.createProduct = async (req, res, next) => {
 // @route PUT /api/products/:id
 exports.updateProduct = async (req, res, next) => {
   try {
+    const updateData = { ...req.body };
+    if (req.user.role === 'farmer') {
+      updateData.status = 'Pending Review';
+    }
     const product = await Product.findOneAndUpdate(
       { _id: req.params.id, farmer: req.user.id },
-      req.body,
+      updateData,
       { new: true, runValidators: true }
     );
     if (!product) return res.status(404).json({ success: false, message: 'Product not found or unauthorized' });

@@ -25,6 +25,11 @@ const productSchema = new mongoose.Schema(
       },
     ],
     isAvailable: { type: Boolean, default: true },
+    status: {
+      type: String,
+      enum: ['Active', 'Inactive', 'Pending Review', 'Rejected'],
+      default: 'Pending Review',
+    },
     harvestDate: { type: Date },
     location: { type: String },
   },
