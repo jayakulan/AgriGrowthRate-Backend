@@ -5,7 +5,7 @@ const Product = require('../models/Product');
 exports.getProducts = async (req, res, next) => {
   try {
     const { category, minPrice, maxPrice, search, page = 1, limit = 12 } = req.query;
-    const query = { status: 'Active' };
+    const query = { status: 'Active', isAvailable: true, stock: { $gt: 0 } };
     if (category) query.category = category;
     if (minPrice || maxPrice) query.price = { $gte: minPrice || 0, $lte: maxPrice || Infinity };
     if (search) query.name = { $regex: search, $options: 'i' };
@@ -49,7 +49,7 @@ exports.getProduct = async (req, res, next) => {
     const product = await Product.findById(req.params.id).populate('farmer', 'name avatar location phone');
     if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
     
-    if (product.status !== 'Active') {
+    if (product.status !== 'Active' || !product.isAvailable) {
       let isAuthorized = false;
       const authHeader = req.headers.authorization;
       if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -66,7 +66,7 @@ exports.getProduct = async (req, res, next) => {
       }
       
       if (!isAuthorized) {
-        return res.status(403).json({ success: false, message: 'Product is not approved' });
+        return res.status(403).json({ success: false, message: 'Product is not available' });
       }
     }
 
@@ -94,6 +94,9 @@ exports.updateProduct = async (req, res, next) => {
     const updateData = { ...req.body };
     if (req.user.role === 'farmer') {
       updateData.status = 'Pending Review';
+    }
+    if (updateData.stock !== undefined && Number(updateData.stock) === 0) {
+      updateData.isAvailable = false;
     }
     const product = await Product.findOneAndUpdate(
       { _id: req.params.id, farmer: req.user.id },

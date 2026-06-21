@@ -31,6 +31,9 @@ router.post('/', protect, async (req, res, next) => {
 
       // Decrement stock
       product.stock -= item.quantity;
+      if (product.stock === 0) {
+        product.isAvailable = false;
+      }
       await product.save();
 
       totalAmount += product.price * item.quantity;
