@@ -31,6 +31,8 @@ const orderSchema = new mongoose.Schema(
     },
     orderConfirmationNumber: { type: String, unique: true },
     deliveredAt: { type: Date },
+    isReviewedByConsumer: { type: Boolean, default: false },
+    isReviewedByFarmer: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
