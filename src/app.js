@@ -49,7 +49,8 @@ app.get('/api/health', (req, res) => {
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
-app.use('/api/chat', chatRoutes);
+app.use('/api/chat', chatRoutes); // AI Chat
+app.use('/api/conversations', require('./routes/conversationRoutes')); // User-to-User Chat
 app.use('/api/ai', aiRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/orders', orderRoutes);
