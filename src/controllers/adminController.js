@@ -141,8 +141,20 @@ exports.getAllProducts = async (req, res, next) => {
     const { status, category, search, page = 1, limit = 10 } = req.query;
     const skip = (page - 1) * limit;
     
-    let query = {};
-    if (status) query.status = status;
+    let query = { isAvailable: true };
+    if (status) {
+      if (status.toLowerCase() === 'approved' || status.toLowerCase() === 'active') {
+        query.status = 'Active';
+      } else if (status.toLowerCase() === 'pending' || status.toLowerCase() === 'pending review') {
+        query.status = 'Pending Review';
+      } else if (status.toLowerCase() === 'rejected') {
+        query.status = 'Rejected';
+      } else if (status.toLowerCase() === 'inactive') {
+        query.status = 'Inactive';
+      } else {
+        query.status = status;
+      }
+    }
     if (category) query.category = category;
     if (search) query.$or = [
       { name: { $regex: search, $options: 'i' } },
@@ -150,16 +162,37 @@ exports.getAllProducts = async (req, res, next) => {
     ];
 
     const products = await Product.find(query)
-      .populate('farmer', 'name email phone')
+      .populate('farmer', 'name email phone location')
       .skip(skip)
       .limit(Number(limit))
       .sort({ createdAt: -1 });
     
     const total = await Product.countDocuments(query);
+    const totalAll = await Product.countDocuments({ isAvailable: true });
+    const totalApproved = await Product.countDocuments({ status: 'Active', isAvailable: true });
+    const totalRejected = await Product.countDocuments({ status: 'Rejected', isAvailable: true });
+
+    const mappedProducts = products.map(p => {
+      const obj = p.toObject();
+      if (obj.status === 'Active') obj.status = 'Approved';
+      else if (obj.status === 'Pending Review') obj.status = 'Pending';
+      obj.quantity = obj.stock;
+      obj.farmerName = obj.farmer?.name || 'Unknown';
+      obj.farmerEmail = obj.farmer?.email || '';
+      obj.farmerPhone = obj.farmer?.phone || '';
+      obj.image = obj.images?.[0] || '';
+      obj.dateAdded = obj.createdAt;
+      return obj;
+    });
 
     res.json({
       success: true,
-      data: products,
+      data: mappedProducts,
+      counts: {
+        all: totalAll,
+        approved: totalApproved,
+        rejected: totalRejected
+      },
       pagination: { total, page: Number(page), limit: Number(limit), pages: Math.ceil(total / limit) },
     });
   } catch (error) {
