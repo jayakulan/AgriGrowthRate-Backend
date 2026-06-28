@@ -15,9 +15,11 @@ const adminRoutes = require('./routes/adminRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const subscriptionRoutes = require('./routes/subscriptionRoutes');
 const feedbackRoutes = require('./routes/feedbackRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 
 // Connect to MongoDB
 connectDB();
+
 
 const app = express();
 
@@ -55,6 +57,8 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/feedback', feedbackRoutes);
+app.use('/api/notifications', notificationRoutes);
+
 
 // 404 handler
 app.use((req, res) => {
