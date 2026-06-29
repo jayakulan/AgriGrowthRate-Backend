@@ -3,6 +3,8 @@ const Product = require('../models/Product');
 const Order = require('../models/Order');
 const Chat = require('../models/Chat');
 const FarmerCard = require('../models/FarmerCard');
+const Notification = require('../models/Notification');
+
 
 // @desc  Get dashboard analytics
 // @route GET /api/admin/analytics
@@ -217,7 +219,24 @@ exports.updateProductStatus = async (req, res, next) => {
 
     if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
 
+    // Send notification to farmer if approved or rejected
+    if (['Active', 'Rejected'].includes(status)) {
+      const type = status === 'Active' ? 'product_approval' : 'product_rejection';
+      const title = status === 'Active' ? 'Product Approved' : 'Product Rejected';
+      const message = status === 'Active'
+        ? `Your product "${product.name}" has been approved and is now active.`
+        : `Your product "${product.name}" has been rejected by the administrator.`;
+
+      await Notification.create({
+        recipient: product.farmer._id,
+        type,
+        title,
+        message
+      });
+    }
+
     res.json({ success: true, data: product, message: 'Product status updated' });
+
   } catch (error) {
     next(error);
   }
