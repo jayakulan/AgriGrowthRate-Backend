@@ -14,7 +14,9 @@ const userSchema = new mongoose.Schema(
     avatar: { type: String, default: '' },
     phone: { type: String, default: '' },
     address: { type: String, default: '' },
+    favoriteFarmers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     isVerified: { type: Boolean, default: false },
+    farmerCardNo: { type: String, default: '' },
     refreshToken: { type: String, default: '' },
     freeChatCount: { type: Number, default: 4 }, // AI chat limits
     isSubscribed: { type: Boolean, default: false },

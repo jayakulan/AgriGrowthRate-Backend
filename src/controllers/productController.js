@@ -8,7 +8,10 @@ exports.getProducts = async (req, res, next) => {
     const { category, minPrice, maxPrice, search, page = 1, limit = 12 } = req.query;
     const query = { status: 'Active', isAvailable: true, stock: { $gt: 0 } };
     if (category) query.category = category;
-    if (minPrice || maxPrice) query.price = { $gte: minPrice || 0, $lte: maxPrice || Infinity };
+    if (minPrice || maxPrice) {
+      query.price = { $gte: Number(minPrice) || 0 };
+      if (maxPrice) query.price.$lte = Number(maxPrice);
+    }
     if (search) query.name = { $regex: search, $options: 'i' };
 
     const products = await Product.find(query)
@@ -73,6 +76,10 @@ exports.getMyProducts = async (req, res, next) => {
 // @route GET /api/products/:id
 exports.getProduct = async (req, res, next) => {
   try {
+    const mongoose = require('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(404).json({ success: false, message: 'Invalid product ID format' });
+    }
     const product = await Product.findById(req.params.id).populate('farmer', 'name avatar location phone');
     if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
     
