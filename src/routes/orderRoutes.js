@@ -3,6 +3,7 @@ const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
 const Order = require('../models/Order');
 const Product = require('../models/Product');
+const Conversation = require('../models/Conversation');
 
 // @desc  Create order
 // @route POST /api/orders
@@ -35,6 +36,9 @@ router.post('/', protect, async (req, res, next) => {
 
       // Decrement stock
       product.stock -= item.quantity;
+      if (product.stock === 0) {
+        product.isAvailable = false;
+      }
       await product.save();
 
       totalAmount += product.price * item.quantity;
@@ -62,6 +66,29 @@ router.post('/', protect, async (req, res, next) => {
         country: 'Sri Lanka'
       }
     });
+
+    // Create a chat conversation for each unique farmer involved in the order
+    const farmerIds = new Set();
+    for (const item of items) {
+      const product = await Product.findById(item.product);
+      if (product && product.farmer) {
+        farmerIds.add(product.farmer.toString());
+      }
+    }
+
+    for (const farmerId of farmerIds) {
+      // Check if conversation already exists
+      let conversation = await Conversation.findOne({
+        participants: { $all: [req.user._id, farmerId] }
+      });
+
+      if (!conversation) {
+        await Conversation.create({
+          participants: [req.user._id, farmerId],
+          order: order._id
+        });
+      }
+    }
 
     // Send order confirmation number via SMS using text.lk
     if (req.user.phone) {

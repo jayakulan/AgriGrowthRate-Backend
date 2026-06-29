@@ -3,6 +3,8 @@ const Product = require('../models/Product');
 const Order = require('../models/Order');
 const Chat = require('../models/Chat');
 const FarmerCard = require('../models/FarmerCard');
+const Notification = require('../models/Notification');
+
 
 // @desc  Get dashboard analytics
 // @route GET /api/admin/analytics
@@ -141,8 +143,20 @@ exports.getAllProducts = async (req, res, next) => {
     const { status, category, search, page = 1, limit = 10 } = req.query;
     const skip = (page - 1) * limit;
     
-    let query = {};
-    if (status) query.status = status;
+    let query = { isAvailable: true };
+    if (status) {
+      if (status.toLowerCase() === 'approved' || status.toLowerCase() === 'active') {
+        query.status = 'Active';
+      } else if (status.toLowerCase() === 'pending' || status.toLowerCase() === 'pending review') {
+        query.status = 'Pending Review';
+      } else if (status.toLowerCase() === 'rejected') {
+        query.status = 'Rejected';
+      } else if (status.toLowerCase() === 'inactive') {
+        query.status = 'Inactive';
+      } else {
+        query.status = status;
+      }
+    }
     if (category) query.category = category;
     if (search) query.$or = [
       { name: { $regex: search, $options: 'i' } },
@@ -150,16 +164,37 @@ exports.getAllProducts = async (req, res, next) => {
     ];
 
     const products = await Product.find(query)
-      .populate('farmer', 'name email phone')
+      .populate('farmer', 'name email phone location')
       .skip(skip)
       .limit(Number(limit))
       .sort({ createdAt: -1 });
     
     const total = await Product.countDocuments(query);
+    const totalAll = await Product.countDocuments({ isAvailable: true });
+    const totalApproved = await Product.countDocuments({ status: 'Active', isAvailable: true });
+    const totalRejected = await Product.countDocuments({ status: 'Rejected', isAvailable: true });
+
+    const mappedProducts = products.map(p => {
+      const obj = p.toObject();
+      if (obj.status === 'Active') obj.status = 'Approved';
+      else if (obj.status === 'Pending Review') obj.status = 'Pending';
+      obj.quantity = obj.stock;
+      obj.farmerName = obj.farmer?.name || 'Unknown';
+      obj.farmerEmail = obj.farmer?.email || '';
+      obj.farmerPhone = obj.farmer?.phone || '';
+      obj.image = obj.images?.[0] || '';
+      obj.dateAdded = obj.createdAt;
+      return obj;
+    });
 
     res.json({
       success: true,
-      data: products,
+      data: mappedProducts,
+      counts: {
+        all: totalAll,
+        approved: totalApproved,
+        rejected: totalRejected
+      },
       pagination: { total, page: Number(page), limit: Number(limit), pages: Math.ceil(total / limit) },
     });
   } catch (error) {
@@ -184,7 +219,24 @@ exports.updateProductStatus = async (req, res, next) => {
 
     if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
 
+    // Send notification to farmer if approved or rejected
+    if (['Active', 'Rejected'].includes(status)) {
+      const type = status === 'Active' ? 'product_approval' : 'product_rejection';
+      const title = status === 'Active' ? 'Product Approved' : 'Product Rejected';
+      const message = status === 'Active'
+        ? `Your product "${product.name}" has been approved and is now active.`
+        : `Your product "${product.name}" has been rejected by the administrator.`;
+
+      await Notification.create({
+        recipient: product.farmer._id,
+        type,
+        title,
+        message
+      });
+    }
+
     res.json({ success: true, data: product, message: 'Product status updated' });
+
   } catch (error) {
     next(error);
   }
@@ -359,11 +411,24 @@ exports.getAdminProfile = async (req, res, next) => {
 // @route PUT /api/admin/profile
 exports.updateAdminProfile = async (req, res, next) => {
   try {
-    const { name, phone, address, avatar } = req.body;
+    const { name, phone, address, avatar, location, bio, email } = req.body;
     
+    const updateData = { name, phone, address, avatar, location, bio };
+    
+    if (email) {
+      const normalizedEmail = email.trim().toLowerCase();
+      if (normalizedEmail !== req.user.email) {
+        const emailExists = await User.findOne({ email: normalizedEmail, _id: { $ne: req.user.id } });
+        if (emailExists) {
+          return res.status(400).json({ success: false, message: 'Email address is already in use by another account' });
+        }
+        updateData.email = normalizedEmail;
+      }
+    }
+
     const admin = await User.findByIdAndUpdate(
       req.user.id,
-      { name, phone, address, avatar },
+      updateData,
       { new: true }
     ).select('-password -refreshToken');
 

@@ -14,9 +14,12 @@ const aiRoutes = require('./routes/aiRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const subscriptionRoutes = require('./routes/subscriptionRoutes');
+const feedbackRoutes = require('./routes/feedbackRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 
 // Connect to MongoDB
 connectDB();
+
 
 const app = express();
 
@@ -48,11 +51,15 @@ app.get('/api/health', (req, res) => {
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
-app.use('/api/chat', chatRoutes);
+app.use('/api/chat', chatRoutes); // AI Chat
+app.use('/api/conversations', require('./routes/conversationRoutes')); // User-to-User Chat
 app.use('/api/ai', aiRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
+app.use('/api/feedback', feedbackRoutes);
+app.use('/api/notifications', notificationRoutes);
+
 
 // 404 handler
 app.use((req, res) => {
