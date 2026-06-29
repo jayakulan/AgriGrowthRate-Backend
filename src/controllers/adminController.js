@@ -411,11 +411,24 @@ exports.getAdminProfile = async (req, res, next) => {
 // @route PUT /api/admin/profile
 exports.updateAdminProfile = async (req, res, next) => {
   try {
-    const { name, phone, address, avatar } = req.body;
+    const { name, phone, address, avatar, location, bio, email } = req.body;
     
+    const updateData = { name, phone, address, avatar, location, bio };
+    
+    if (email) {
+      const normalizedEmail = email.trim().toLowerCase();
+      if (normalizedEmail !== req.user.email) {
+        const emailExists = await User.findOne({ email: normalizedEmail, _id: { $ne: req.user.id } });
+        if (emailExists) {
+          return res.status(400).json({ success: false, message: 'Email address is already in use by another account' });
+        }
+        updateData.email = normalizedEmail;
+      }
+    }
+
     const admin = await User.findByIdAndUpdate(
       req.user.id,
-      { name, phone, address, avatar },
+      updateData,
       { new: true }
     ).select('-password -refreshToken');
 
