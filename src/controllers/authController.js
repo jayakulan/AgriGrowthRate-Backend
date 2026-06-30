@@ -126,7 +126,7 @@ exports.getMe = async (req, res, next) => {
 // @route POST /api/auth/google
 exports.googleLogin = async (req, res, next) => {
   try {
-    const { credential, accessToken } = req.body;
+    const { credential, accessToken, role } = req.body;
     if (!credential && !accessToken) {
       return res.status(400).json({ success: false, message: 'Google credential or access token is required' });
     }
@@ -174,7 +174,7 @@ exports.googleLogin = async (req, res, next) => {
         password: generatedPassword,
         avatar: picture || '',
         isVerified: true,
-        role: 'consumer',
+        role: role && ['farmer', 'consumer'].includes(role) ? role : 'consumer',
       });
 
       sendTokenResponse(user, 201, res);
