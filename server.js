@@ -3,7 +3,7 @@ const app = require('./src/app');
 
 const PORT = process.env.PORT || 5001;
 
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🌱 AgriGrowthRate Backend running in ${process.env.NODE_ENV || 'development'} mode`);
   console.log(`🚀 Server listening on http://localhost:${PORT}`);
   console.log(`📋 API Health: http://localhost:${PORT}/api/health\n`);

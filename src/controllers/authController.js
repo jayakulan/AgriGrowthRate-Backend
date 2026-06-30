@@ -308,14 +308,46 @@ exports.refresh = async (req, res, next) => {
 // @route PUT /api/auth/profile
 exports.updateProfile = async (req, res, next) => {
   try {
-    const { name, phone, address, avatar } = req.body;
-    const user = await User.findByIdAndUpdate(
+    const { name, phone, address, avatar, otp } = req.body;
+    
+    const currentUser = await User.findById(req.user.id);
+    if (!currentUser) return res.status(404).json({ success: false, message: 'User not found' });
+
+    let formattedPhone = currentUser.phone;
+    if (phone) {
+      formattedPhone = phone.trim().replace(/[\s\-\+\(\)]/g, ''); 
+      if (formattedPhone.startsWith('0')) {
+        formattedPhone = '94' + formattedPhone.slice(1);
+      } else if (!formattedPhone.startsWith('94') && formattedPhone.length === 9) {
+        formattedPhone = '94' + formattedPhone;
+      }
+    }
+
+    if (formattedPhone !== currentUser.phone) {
+      if (!otp) {
+        return res.status(400).json({ success: false, message: 'OTP is required to change phone number' });
+      }
+
+      const existingPhone = await User.findOne({ phone: formattedPhone });
+      if (existingPhone) {
+        return res.status(400).json({ success: false, message: 'Phone number already registered' });
+      }
+
+      const record = await OtpVerification.findOne({ phone: formattedPhone, otp });
+      if (!record) {
+        return res.status(400).json({ success: false, message: 'Invalid or expired verification OTP' });
+      }
+
+      await OtpVerification.deleteMany({ phone: formattedPhone });
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(
       req.user.id,
-      { name, phone, address, avatar },
+      { name, phone: formattedPhone, address, avatar },
       { new: true }
     ).select('-password -refreshToken');
 
-    res.json({ success: true, data: user, message: 'Profile updated successfully' });
+    res.json({ success: true, data: updatedUser, message: 'Profile updated successfully' });
   } catch (error) {
     next(error);
   }

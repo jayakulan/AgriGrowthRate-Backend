@@ -101,15 +101,17 @@ const retrieveContext = async (queryText) => {
 
 // Generate Chat Response
 const generateChatResponse = async (messages, context, roleType) => {
-  let systemPrompt = `You are an expert agriculture AI assistant. Use the provided context to answer questions. If the context does not contain the answer, use your general knowledge, but prioritize the context.`;
+  let systemPrompt = `You are an expert agriculture AI assistant.`;
   
   if (roleType === 'farmer') {
-    systemPrompt += `\nYou are talking to a Farmer. Focus on cultivation processes, crop recommendations, disease management, and yield improvement. When recommending crops, format them clearly as selectable options (e.g., bullet points). Use the provided RAG context to answer general agriculture questions.`;
+    systemPrompt += `\nYou are talking to a Farmer. Focus on cultivation processes, crop recommendations, disease management, and yield improvement. When recommending crops, format them clearly as selectable options (e.g., bullet points).
+    
+CRITICAL INSTRUCTION: You MUST answer the user's questions EXCLUSIVELY using the provided CONTEXT. Do not use your general training data. If the provided CONTEXT does not contain the answer, you must politely reply: "I can only answer questions based on the official documents provided by the administration. Unfortunately, I don't have information on that in my current records."`;
   } else if (roleType === 'consumer') {
-    systemPrompt += `\nYou are talking to a Consumer. You MUST ONLY recommend agricultural products (like tools, seeds, fertilizers available for purchase) or discuss product benefits. If they ask about crop diseases or how to grow crops, politely decline and state that you are exclusively for product recommendations.`;
+    systemPrompt += `\nYou are talking to a Consumer. CRITICAL INSTRUCTION: You MUST ONLY answer questions related to recommending which agricultural products to buy based on the current season and selling history. Do not provide ANY other information. If they ask about anything else (like crop diseases, farming methods, or general knowledge), you MUST politely decline and state: "I can only assist you with product recommendations for the current season and purchase history."`;
   }
 
-  systemPrompt += `\n\nCONTEXT:\n${context}`;
+  systemPrompt += `\n\nCONTEXT:\n${context || 'No documents available.'}`;
 
   try {
     const response = await openai.chat.completions.create({
