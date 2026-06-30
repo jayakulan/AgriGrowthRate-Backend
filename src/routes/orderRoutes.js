@@ -219,4 +219,48 @@ router.put('/:id/status', protect, async (req, res, next) => {
   }
 });
 
+router.put('/:id/cancel', protect, async (req, res, next) => {
+  try {
+    const order = await Order.findById(req.params.id).populate('items.product');
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
+    }
+
+    // Verify authorization: either the consumer or the farmer who owns the product can cancel
+    const isConsumer = order.consumer.toString() === req.user._id.toString();
+    const isFarmer = order.items.some(item => 
+      item.product && item.product.farmer && item.product.farmer.toString() === req.user._id.toString()
+    );
+
+    if (!isConsumer && !isFarmer && req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Not authorized to cancel this order' });
+    }
+
+    if (order.status !== 'pending') {
+      return res.status(400).json({ success: false, message: 'Only pending orders can be cancelled' });
+    }
+
+    // Revert product stock
+    for (const item of order.items) {
+      const product = await Product.findById(item.product._id || item.product);
+      if (product) {
+        product.stock += item.quantity;
+        product.isAvailable = true; // Mark as available again if stock was 0
+        await product.save();
+      }
+    }
+
+    order.status = 'cancelled';
+    await order.save();
+
+    res.json({
+      success: true,
+      data: order,
+      message: 'Order cancelled successfully and stock updated'
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;
