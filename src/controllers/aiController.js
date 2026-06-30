@@ -67,6 +67,20 @@ exports.uploadKnowledgeBase = async (req, res, next) => {
   }
 };
 
+// @desc Get all knowledge base documents (Admin)
+// @route GET /api/ai/knowledge
+exports.getKnowledgeBases = async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+    const docs = await KnowledgeBase.find().sort({ createdAt: -1 });
+    res.json({ success: true, data: docs });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc Chat with RAG AI
 // @route POST /api/ai/chat
 exports.chatWithAI = async (req, res, next) => {
