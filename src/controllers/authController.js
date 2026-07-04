@@ -8,11 +8,63 @@ const { sendTokenResponse } = require('../utils/cookies');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
+const SRI_LANKAN_DISTRICTS = [
+  'Colombo', 'Gampaha', 'Kalutara', 'Kandy', 'Matale', 'Nuwara Eliya',
+  'Galle', 'Matara', 'Hambantota', 'Jaffna', 'Kilinochchi', 'Mannar',
+  'Vavuniya', 'Mullaitivu', 'Batticaloa', 'Ampara', 'Trincomalee',
+  'Kurunegala', 'Puttalam', 'Anuradhapura', 'Polonnaruwa', 'Badulla',
+  'Moneragala', 'Ratnapura', 'Kegalle'
+];
+
 // @desc  Register a new user
 // @route POST /api/auth/register
 exports.register = async (req, res, next) => {
   try {
-    const { name, email, password, role, phone, otp, farmerCardNo } = req.body;
+    const { name, email, password, role, phone, otp, farmerCardNo, address } = req.body;
+    
+    // Extra validation
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, message: 'Full Name is required' });
+    }
+    if (!/^[A-Za-z\s]+$/.test(name.trim())) {
+      return res.status(400).json({ success: false, message: 'Full Name must contain only letters and spaces' });
+    }
+    if (name.trim().length < 3) {
+      return res.status(400).json({ success: false, message: 'Full Name must be at least 3 characters long' });
+    }
+
+    if (!email || !email.trim()) {
+      return res.status(400).json({ success: false, message: 'Email is required' });
+    }
+    if (!/^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$/.test(email.trim())) {
+      return res.status(400).json({ success: false, message: 'Invalid email format' });
+    }
+
+    if (!password) {
+      return res.status(400).json({ success: false, message: 'Password is required' });
+    }
+    const pwdRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^a-zA-Z\d]).{8,}$/;
+    if (!pwdRegex.test(password)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Password must be at least 8 characters, include uppercase, lowercase, number & special character' 
+      });
+    }
+
+    if (!address || !address.trim()) {
+      return res.status(400).json({ success: false, message: 'Address is required' });
+    }
+    if (!SRI_LANKAN_DISTRICTS.includes(address.trim())) {
+      return res.status(400).json({ success: false, message: 'Invalid address. Please select a valid Sri Lankan district.' });
+    }
+
+    if (!phone || !phone.trim()) {
+      return res.status(400).json({ success: false, message: 'Phone number is required' });
+    }
+    if (!/^(?:\+94|0)?7[0-9]{8}$/.test(phone.trim().replace(/[\s\-]/g, ''))) {
+      return res.status(400).json({ success: false, message: 'Invalid Sri Lankan phone number format (e.g. 077XXXXXXXX)' });
+    }
+
     const normalizedEmail = email ? email.trim().toLowerCase() : '';
     const existing = await User.findOne({ email: normalizedEmail });
     if (existing) return res.status(400).json({ success: false, message: 'Email already registered' });
@@ -58,7 +110,16 @@ exports.register = async (req, res, next) => {
       await farmerCard.save();
     }
 
-    const user = await User.create({ name, email, password, role, phone: formattedPhone, isVerified: true, farmerCardNo: role === 'farmer' ? farmerCardNo.trim() : '' });
+    const user = await User.create({ 
+      name: name.trim(), 
+      email: normalizedEmail, 
+      password, 
+      role, 
+      phone: formattedPhone, 
+      address: address.trim(),
+      isVerified: true, 
+      farmerCardNo: role === 'farmer' ? farmerCardNo.trim() : '' 
+    });
     sendTokenResponse(user, 201, res);
   } catch (error) {
     next(error);
@@ -192,6 +253,16 @@ exports.sendOtp = async (req, res, next) => {
     const { phone, email } = req.body;
     if (!phone) {
       return res.status(400).json({ success: false, message: 'Phone number is required' });
+    }
+
+    // Validate phone number format
+    if (!/^(?:\+94|0)?7[0-9]{8}$/.test(phone.trim().replace(/[\s\-]/g, ''))) {
+      return res.status(400).json({ success: false, message: 'Invalid Sri Lankan phone number format (e.g. 077XXXXXXXX)' });
+    }
+
+    // Validate email format
+    if (email && !/^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$/.test(email.trim())) {
+      return res.status(400).json({ success: false, message: 'Invalid email format' });
     }
 
     // Standardize Sri Lankan phone number format (e.g. 0771234567 or +94771234567 -> 94771234567)
