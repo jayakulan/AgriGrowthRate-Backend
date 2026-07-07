@@ -15,12 +15,42 @@ exports.getDashboardAnalytics = async (req, res, next) => {
     const consumers = await User.countDocuments({ role: 'consumer' });
     const adminCount = await User.countDocuments({ role: 'admin' });
     
+    const activeFarmers = await User.countDocuments({
+      role: 'farmer',
+      $or: [
+        { status: { $regex: /^enabled$/i } },
+        { status: { $regex: /^active$/i } },
+        { isVerified: true }
+      ]
+    });
+    const activeRetailers = await User.countDocuments({
+      $or: [{ role: 'retailer' }, { role: 'consumer' }],
+      $or: [
+        { status: { $regex: /^enabled$/i } },
+        { status: { $regex: /^active$/i } },
+        { isVerified: true }
+      ]
+    });
+    const approvedProducts = await Product.countDocuments({
+      $or: [
+        { approvalStatus: { $regex: /^approved$/i } },
+        { status: { $regex: /^active$/i } },
+        { status: { $regex: /^approved$/i } }
+      ]
+    });
+    const deliveredOrders = await Order.countDocuments({
+      $or: [
+        { orderStatus: { $regex: /^delivered$/i } },
+        { status: { $regex: /^delivered$/i } }
+      ]
+    });
+
     const totalProducts = await Product.countDocuments();
     const activeProducts = await Product.countDocuments({ status: 'Active' });
     const pendingProducts = await Product.countDocuments({ status: 'Pending Review' });
     
     const totalOrders = await Order.countDocuments();
-    const deliveredOrders = await Order.countDocuments({ status: 'Delivered' });
+    const deliveredOrdersOld = await Order.countDocuments({ status: 'Delivered' });
     const pendingOrders = await Order.countDocuments({ status: 'Pending' });
     
     const orders = await Order.find().select('totalAmount createdAt status');
@@ -37,9 +67,13 @@ exports.getDashboardAnalytics = async (req, res, next) => {
       data: {
         users: { total: totalUsers, farmers, consumers, admins: adminCount },
         products: { total: totalProducts, active: activeProducts, pending: pendingProducts },
-        orders: { total: totalOrders, delivered: deliveredOrders, pending: pendingOrders },
+        orders: { total: totalOrders, delivered: deliveredOrdersOld, pending: pendingOrders },
         revenue: totalRevenue,
         monthlyOrderTrend: monthlyData,
+        activeFarmers,
+        activeRetailers,
+        approvedProducts,
+        deliveredOrders,
       },
     });
   } catch (error) {
@@ -206,7 +240,7 @@ exports.getAllProducts = async (req, res, next) => {
 // @route PATCH /api/admin/products/:id/status
 exports.updateProductStatus = async (req, res, next) => {
   try {
-    const { status } = req.body;
+    const { status, reason } = req.body;
     if (!['Active', 'Inactive', 'Pending Review', 'Rejected'].includes(status)) {
       return res.status(400).json({ success: false, message: 'Invalid status' });
     }
@@ -225,7 +259,7 @@ exports.updateProductStatus = async (req, res, next) => {
       const title = status === 'Active' ? 'Product Approved' : 'Product Rejected';
       const message = status === 'Active'
         ? `Your product "${product.name}" has been approved and is now active.`
-        : `Your product "${product.name}" has been rejected by the administrator.`;
+        : `Your product is rejected, Product Name: ${product.name}. Reason: ${reason || 'No reason specified'}`;
 
       await Notification.create({
         recipient: product.farmer._id,
@@ -264,20 +298,55 @@ exports.getAllOrders = async (req, res, next) => {
     const skip = (page - 1) * limit;
     
     let query = {};
-    if (status) query.status = status;
+    if (status) {
+      if (status.toLowerCase() === 'shipping') {
+        query.status = { $in: ['Shipping', 'shipping', 'Shipped', 'shipped'] };
+      } else {
+        query.status = { $regex: new RegExp(`^${status}$`, 'i') };
+      }
+    }
 
     const orders = await Order.find(query)
       .populate('consumer', 'name email phone')
-      .populate('farmer', 'name email phone')
+      .populate({
+        path: 'items.product',
+        populate: {
+          path: 'farmer',
+          select: 'name email phone'
+        }
+      })
       .skip(skip)
       .limit(Number(limit))
       .sort({ createdAt: -1 });
     
     const total = await Order.countDocuments(query);
 
+    // Calculate counts for cards
+    const deliveredCount = await Order.countDocuments({
+      status: { $in: ['Delivered', 'delivered'] }
+    });
+    const shippingCount = await Order.countDocuments({
+      status: { $in: ['Shipping', 'shipping', 'Shipped', 'shipped'] }
+    });
+    const cancelledCount = await Order.countDocuments({
+      status: { $in: ['Cancelled', 'cancelled'] }
+    });
+
+    // Calculate revenue (delivered order total amount)
+    const deliveredOrders = await Order.find({
+      status: { $in: ['Delivered', 'delivered'] }
+    }).select('totalAmount');
+    const revenue = deliveredOrders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
+
     res.json({
       success: true,
       data: orders,
+      counts: {
+        delivered: deliveredCount,
+        shipping: shippingCount,
+        cancelled: cancelledCount,
+      },
+      revenue,
       pagination: { total, page: Number(page), limit: Number(limit), pages: Math.ceil(total / limit) },
     });
   } catch (error) {
@@ -330,7 +399,7 @@ exports.getReports = async (req, res, next) => {
     });
 
     // Revenue analytics
-    const orders = await Order.find().select('totalAmount createdAt status');
+    const orders = await Order.find().select('totalAmount createdAt status items');
     const revenueData = {};
     orders.forEach(order => {
       const month = new Date(order.createdAt).toLocaleString('default', { month: 'short', year: '2-digit' });
@@ -343,6 +412,47 @@ exports.getReports = async (req, res, next) => {
       { $sort: { count: -1 } }
     ]);
 
+    // Active Users (enabled farmers + retailers)
+    const activeFarmers = await User.countDocuments({
+      role: 'farmer',
+      $or: [
+        { status: { $regex: /^enabled$/i } },
+        { status: { $regex: /^active$/i } },
+        { isVerified: true }
+      ]
+    });
+    const activeRetailers = await User.countDocuments({
+      $or: [{ role: 'retailer' }, { role: 'consumer' }],
+      $or: [
+        { status: { $regex: /^enabled$/i } },
+        { status: { $regex: /^active$/i } },
+        { isVerified: true }
+      ]
+    });
+    const activeUsers = activeFarmers + activeRetailers;
+
+    // Products Sold (Sum of quantities of items in completed/delivered/shipping orders)
+    let productsSold = 0;
+    const completedOrders = orders.filter(o =>
+      ['delivered', 'shipping', 'shipped'].includes((o.status || '').toLowerCase())
+    );
+    completedOrders.forEach(order => {
+      if (order.items) {
+        order.items.forEach(item => {
+          productsSold += (item.quantity || 0);
+        });
+      }
+    });
+
+    // Total Orders (delivered + shipping orders)
+    const totalOrdersCount = completedOrders.length;
+
+    // Total Revenue (total delivered order amount)
+    const deliveredOrders = orders.filter(o =>
+      ['delivered'].includes((o.status || '').toLowerCase())
+    );
+    const totalRevenue = deliveredOrders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
+
     res.json({
       success: true,
       data: {
@@ -350,6 +460,12 @@ exports.getReports = async (req, res, next) => {
         userGrowth,
         revenueData,
         categoryBreakdown: categoryData,
+        stats: {
+          activeUsers,
+          productsSold,
+          totalOrdersCount,
+          totalRevenue
+        }
       },
     });
   } catch (error) {
@@ -413,6 +529,15 @@ exports.updateAdminProfile = async (req, res, next) => {
   try {
     const { name, phone, address, avatar, location, bio, email } = req.body;
     
+    if (name) {
+      if (/\d/.test(name)) {
+        return res.status(400).json({ success: false, message: 'Name cannot contain numbers' });
+      }
+      if (!/^[a-zA-Z\s\.\-]+$/.test(name)) {
+        return res.status(400).json({ success: false, message: 'Name can only contain alphabetic characters, spaces, dots, or hyphens' });
+      }
+    }
+
     const updateData = { name, phone, address, avatar, location, bio };
     
     if (email) {

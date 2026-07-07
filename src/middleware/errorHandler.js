@@ -1,5 +1,6 @@
 // Global error handling middleware
 const errorHandler = (err, req, res, next) => {
+  console.error('SERVER_ERROR:', err);
   let statusCode = res.statusCode === 200 ? 500 : res.statusCode;
   let message = err.message || 'Internal Server Error';
 

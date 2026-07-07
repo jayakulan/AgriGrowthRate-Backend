@@ -384,6 +384,15 @@ exports.updateProfile = async (req, res, next) => {
     const currentUser = await User.findById(req.user.id);
     if (!currentUser) return res.status(404).json({ success: false, message: 'User not found' });
 
+    if (name && ['farmer', 'retailer', 'consumer'].includes(currentUser.role)) {
+      if (/\d/.test(name)) {
+        return res.status(400).json({ success: false, message: 'Name cannot contain numbers' });
+      }
+      if (!/^[a-zA-Z\s\.\-]+$/.test(name)) {
+        return res.status(400).json({ success: false, message: 'Name can only contain alphabetic characters, spaces, dots, or hyphens' });
+      }
+    }
+
     let formattedPhone = currentUser.phone;
     if (phone) {
       formattedPhone = phone.trim().replace(/[\s\-\+\(\)]/g, ''); 
