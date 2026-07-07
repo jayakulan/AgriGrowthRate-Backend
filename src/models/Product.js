@@ -31,6 +31,10 @@ const productSchema = new mongoose.Schema(
       enum: ['Active', 'Inactive', 'Pending Review', 'Rejected'],
       default: 'Pending Review',
     },
+    approvalStatus: {
+      type: String,
+      default: 'Approved',
+    },
     harvestDate: { type: Date },
     location: { type: String },
   },

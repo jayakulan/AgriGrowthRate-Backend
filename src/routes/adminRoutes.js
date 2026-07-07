@@ -13,6 +13,7 @@ const adminOnly = (req, res, next) => {
 
 // Analytics & Dashboard
 router.get('/analytics', protect, adminOnly, adminController.getDashboardAnalytics);
+router.get('/debug-reports', adminController.getReports);
 router.get('/reports', protect, adminOnly, adminController.getReports);
 
 // User Management
