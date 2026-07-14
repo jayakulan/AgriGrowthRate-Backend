@@ -1,4 +1,5 @@
 const aiService = require('../services/aiService');
+const DiseaseScan = require('../models/DiseaseScan');
 
 // @desc  Detect crop disease from uploaded image
 // @route POST /api/ai/detect-disease
@@ -76,6 +77,77 @@ exports.getKnowledgeBases = async (req, res, next) => {
     }
     const docs = await KnowledgeBase.find().sort({ createdAt: -1 });
     res.json({ success: true, data: docs });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc  Save disease assessment
+// @route POST /api/ai/assessments
+exports.saveAssessment = async (req, res, next) => {
+  try {
+    const { crop, diseaseName, confidence, treatment, image } = req.body;
+    
+    const scan = await DiseaseScan.create({
+      user: req.user._id,
+      crop,
+      diseaseName,
+      confidence,
+      treatment,
+      image: image || 'https://images.unsplash.com/photo-1592417817098-8f3d6eb19675?w=100&h=100&fit=crop'
+    });
+    
+    res.status(201).json({ success: true, data: scan });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc  Get disease assessments history
+// @route GET /api/ai/assessments
+exports.getAssessments = async (req, res, next) => {
+  try {
+    const scans = await DiseaseScan.find({ user: req.user._id })
+      .sort({ createdAt: -1 })
+      .limit(10);
+      
+    // Calculate monthly stats for the last 7 months
+    const date = new Date();
+    date.setMonth(date.getMonth() - 6);
+    date.setDate(1);
+    date.setHours(0,0,0,0);
+    
+    const stats = await DiseaseScan.aggregate([
+      { $match: { user: req.user._id, createdAt: { $gte: date } } },
+      {
+        $group: {
+          _id: { month: { $month: "$createdAt" }, year: { $year: "$createdAt" } },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { "_id.year": 1, "_id.month": 1 } }
+    ]);
+    
+    // Format stats for frontend
+    const monthlyStats = Array(7).fill(0);
+    const currentMonth = new Date().getMonth() + 1;
+    const currentYear = new Date().getFullYear();
+    
+    stats.forEach(stat => {
+      // Calculate how many months ago this was (0 to 6)
+      let monthsAgo = (currentYear - stat._id.year) * 12 + (currentMonth - stat._id.month);
+      if (monthsAgo >= 0 && monthsAgo < 7) {
+        monthlyStats[6 - monthsAgo] = stat.count;
+      }
+    });
+
+    res.json({ 
+      success: true, 
+      data: {
+        recentScans: scans,
+        monthlyStats
+      } 
+    });
   } catch (error) {
     next(error);
   }
