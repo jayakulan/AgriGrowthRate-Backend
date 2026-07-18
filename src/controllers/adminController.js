@@ -232,7 +232,11 @@ exports.getAllProducts = async (req, res, next) => {
         query.status = status;
       }
     }
-    if (category) query.category = category;
+    if (category) {
+      if (category.toLowerCase() !== 'all categories') {
+        query.category = { $regex: new RegExp(`^${category}$`, 'i') };
+      }
+    }
     if (search) query.$or = [
       { name: { $regex: search, $options: 'i' } },
       { description: { $regex: search, $options: 'i' } }

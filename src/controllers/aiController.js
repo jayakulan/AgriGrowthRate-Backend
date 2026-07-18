@@ -53,7 +53,7 @@ exports.uploadKnowledgeBase = async (req, res, next) => {
 
     const doc = await KnowledgeBase.create({
       filename: req.file.filename,
-      originalName: req.file.originalname,
+      originalName: req.body.datasetName || req.file.originalname,
       fileSize: req.file.size,
       uploadedBy: req.user._id,
       status: 'processing'
@@ -77,6 +77,24 @@ exports.getKnowledgeBases = async (req, res, next) => {
     }
     const docs = await KnowledgeBase.find().sort({ createdAt: -1 });
     res.json({ success: true, data: docs });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc Delete a knowledge base document (Admin)
+// @route DELETE /api/ai/knowledge/:id
+exports.deleteKnowledgeBase = async (req, res, next) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+    const doc = await KnowledgeBase.findById(req.params.id);
+    if (!doc) {
+      return res.status(404).json({ success: false, message: 'Knowledge base not found' });
+    }
+    await doc.deleteOne();
+    res.json({ success: true, message: 'Knowledge base deleted successfully' });
   } catch (error) {
     next(error);
   }

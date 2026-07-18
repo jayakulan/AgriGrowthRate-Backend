@@ -1,6 +1,8 @@
 const Chat = require('../models/Chat');
 const ragService = require('../services/ragService');
 const User = require('../models/User');
+const Order = require('../models/Order');
+const Product = require('../models/Product');
 
 // @desc  Send message to AI chatbot (RAG)
 // @route POST /api/chat/message
@@ -35,12 +37,74 @@ exports.sendMessage = async (req, res, next) => {
     // Add user message
     chat.messages.push({ role: 'user', content: message });
 
-    // Format messages for OpenAI
-    const formattedMessages = chat.messages.map(m => ({ role: m.role, content: m.content }));
+    let aiResponse = "";
 
-    // Get AI response via RAG
-    const ragContext = await ragService.retrieveContext(message);
-    const aiResponse = await ragService.generateChatResponse(formattedMessages, ragContext, user.role);
+    // CUSTOM CONSUMER LOGIC
+    if (context === 'consumer_recommendation') {
+       const msgLower = message.trim().toLowerCase();
+       const isOption1 = msgLower === '1' || msgLower.includes('highest demand') || msgLower.includes('top demand');
+       const isOption2 = msgLower === '2' || msgLower.includes('selling well') || msgLower.includes('top seller') || msgLower.includes('this month');
+       const isOption3 = msgLower === '3' || msgLower.includes('current season') || msgLower.includes('seasonal pick') || msgLower.includes('recommended');
+       
+       if (isOption1 || isOption2) {
+         // Query database for top products
+         try {
+           const timeFilter = isOption2 
+             ? { createdAt: { $gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1) } } // This month
+             : {}; // All time highest demand
+             
+           const topProducts = await Order.aggregate([
+             { $match: timeFilter },
+             { $unwind: "$items" },
+             { $group: { _id: "$items.product", totalQuantity: { $sum: "$items.quantity" } } },
+             { $sort: { totalQuantity: -1 } },
+             { $limit: 5 }
+           ]);
+
+           if (topProducts.length === 0) {
+              aiResponse = "Currently, there are no order records to determine demand.";
+           } else {
+              const productIds = topProducts.map(p => p._id);
+              const products = await Product.find({ _id: { $in: productIds } });
+              
+              aiResponse = isOption1 
+                ? "Here are the products with the highest overall demand based on our records:\n\n"
+                : "Here are the products selling well this month based on our records:\n\n";
+                
+              topProducts.forEach((tp, index) => {
+                 const prod = products.find(p => p._id.toString() === tp._id.toString());
+                 if (prod) {
+                    aiResponse += `${index + 1}. **${prod.name}** - ${tp.totalQuantity} units sold.\n`;
+                 }
+              });
+           }
+         } catch (err) {
+           console.error("DB Query error in chatbot:", err);
+           aiResponse = "Sorry, I couldn't fetch the database records at the moment.";
+         }
+       } else if (isOption3) {
+         // Substitute with actual question for AI
+         const aiQuery = "What products are recommended for the current season?";
+         const modifiedMessages = chat.messages.map(m => ({ 
+           role: m.role, 
+           content: (m.content === '3' || m.content.toLowerCase().includes('season')) ? aiQuery : m.content 
+         }));
+         const ragContext = await ragService.retrieveContext(aiQuery);
+         aiResponse = await ragService.generateChatResponse(modifiedMessages, ragContext, user.role);
+       } else {
+         // Freeform question fallback to RAG
+         const formattedMessages = chat.messages.map(m => ({ role: m.role, content: m.content }));
+         const ragContext = await ragService.retrieveContext(message);
+         aiResponse = await ragService.generateChatResponse(formattedMessages, ragContext, user.role);
+       }
+    } else {
+      // Format messages for OpenAI
+      const formattedMessages = chat.messages.map(m => ({ role: m.role, content: m.content }));
+
+      // Get AI response via RAG
+      const ragContext = await ragService.retrieveContext(message);
+      aiResponse = await ragService.generateChatResponse(formattedMessages, ragContext, user.role);
+    }
 
     // Add assistant response
     chat.messages.push({ role: 'assistant', content: aiResponse });
