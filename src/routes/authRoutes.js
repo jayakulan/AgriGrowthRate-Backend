@@ -1,6 +1,22 @@
 const express = require('express');
 const router = express.Router();
-const { register, login, logout, getMe, googleLogin, sendOtp, refresh, updateProfile, deactivateAccount, updatePassword, toggleFavoriteFarmer, getFavoriteFarmers } = require('../controllers/authController');
+const { 
+  register, 
+  login, 
+  logout, 
+  getMe, 
+  googleLogin, 
+  sendOtp, 
+  refresh, 
+  updateProfile, 
+  deactivateAccount, 
+  updatePassword, 
+  toggleFavoriteFarmer, 
+  getFavoriteFarmers,
+  forgotPasswordSendOtp,
+  forgotPasswordVerifyOtp,
+  forgotPasswordReset
+} = require('../controllers/authController');
 const { protect } = require('../middleware/authMiddleware');
 
 router.post('/register', register);
@@ -15,5 +31,10 @@ router.put('/update-password', protect, updatePassword);
 router.delete('/profile', protect, deactivateAccount);
 router.post('/favorite-farmer/:id', protect, toggleFavoriteFarmer);
 router.get('/favorite-farmers', protect, getFavoriteFarmers);
+
+// Forgot Password routes
+router.post('/forgot-password/send-otp', forgotPasswordSendOtp);
+router.post('/forgot-password/verify-otp', forgotPasswordVerifyOtp);
+router.post('/forgot-password/reset', forgotPasswordReset);
 
 module.exports = router;

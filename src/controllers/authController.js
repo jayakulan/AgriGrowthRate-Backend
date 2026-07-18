@@ -516,3 +516,174 @@ exports.getFavoriteFarmers = async (req, res, next) => {
     next(error);
   }
 };
+
+// @desc    Send OTP to registered user for forgot password
+// @route   POST /api/auth/forgot-password/send-otp
+exports.forgotPasswordSendOtp = async (req, res, next) => {
+  try {
+    const { phone } = req.body;
+    if (!phone) {
+      return res.status(400).json({ success: false, message: 'Phone number is required' });
+    }
+
+    // Validate phone number format
+    if (!/^(?:\+94|0)?7[0-9]{8}$/.test(phone.trim().replace(/[\s\-]/g, ''))) {
+      return res.status(400).json({ success: false, message: 'Invalid Sri Lankan phone number format (e.g. 077XXXXXXXX)' });
+    }
+
+    // Standardize Sri Lankan phone number format (e.g. 0771234567 or +94771234567 -> 94771234567)
+    let formattedPhone = phone.trim().replace(/[\s\-\+\(\)]/g, ''); // Remove spaces, symbols, plus signs
+    if (formattedPhone.startsWith('0')) {
+      formattedPhone = '94' + formattedPhone.slice(1);
+    } else if (!formattedPhone.startsWith('94') && formattedPhone.length === 9) {
+      formattedPhone = '94' + formattedPhone;
+    }
+
+    // Check if phone number is registered
+    const user = await User.findOne({ phone: formattedPhone });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Phone number is not registered on this platform.' });
+    }
+
+    // Generate 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Save to database (overwrite previous OTPs for same phone)
+    await OtpVerification.deleteMany({ phone: formattedPhone });
+    await OtpVerification.create({ phone: formattedPhone, otp });
+
+    // Send SMS via text.lk API
+    const smsUrl = process.env.TEXT_LK_API_URL;
+    const smsToken = process.env.TEXT_LK_API_TOKEN;
+    const senderId = process.env.TEXT_LK_SENDER_ID;
+
+    if (!smsUrl || !smsToken || !senderId) {
+      console.error('[SMS Gateway Error] SMS service environment variables are missing (TEXT_LK_API_URL, TEXT_LK_API_TOKEN, TEXT_LK_SENDER_ID).');
+      return res.status(500).json({
+        success: false,
+        message: 'SMS Gateway is not configured inside the server environment files.'
+      });
+    }
+
+    try {
+      const smsResponse = await fetch(smsUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${smsToken}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          recipient: formattedPhone,
+          sender_id: senderId,
+          type: 'plain',
+          message: `Your AgriGrowthRate password reset OTP is ${otp}. Valid for 10 minutes.`
+        })
+      });
+
+      const smsData = await smsResponse.json();
+      console.log(`[SMS Gateway Response]`, smsData);
+
+      if (!smsResponse.ok || smsData.success === false || smsData.status === 'error') {
+        const errMsg = smsData.message || `SMS gateway failed with status ${smsResponse.status}`;
+        return res.status(400).json({
+          success: false,
+          message: `SMS Gateway Error: ${errMsg}. Please check your Sender ID and balance.`
+        });
+      }
+    } catch (smsErr) {
+      console.error('Error contacting Text.lk Gateway API:', smsErr);
+      return res.status(500).json({
+        success: false,
+        message: 'Could not connect to SMS gateway. Please try again later.'
+      });
+    }
+
+    console.log(`[SMS OTP Debug Log] Forgot password OTP sent to ${formattedPhone}: ${otp}`);
+
+    res.json({
+      success: true,
+      message: 'Password reset OTP sent to your phone number'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Verify OTP for forgot password
+// @route   POST /api/auth/forgot-password/verify-otp
+exports.forgotPasswordVerifyOtp = async (req, res, next) => {
+  try {
+    const { phone, otp } = req.body;
+    if (!phone || !otp) {
+      return res.status(400).json({ success: false, message: 'Phone number and OTP are required' });
+    }
+
+    // Standardize Sri Lankan phone number format
+    let formattedPhone = phone.trim().replace(/[\s\-\+\(\)]/g, '');
+    if (formattedPhone.startsWith('0')) {
+      formattedPhone = '94' + formattedPhone.slice(1);
+    } else if (!formattedPhone.startsWith('94') && formattedPhone.length === 9) {
+      formattedPhone = '94' + formattedPhone;
+    }
+
+    const record = await OtpVerification.findOne({ phone: formattedPhone, otp });
+    if (!record) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired verification OTP' });
+    }
+
+    res.json({
+      success: true,
+      message: 'OTP verified successfully'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Reset password using verified phone and OTP
+// @route   POST /api/auth/forgot-password/reset
+exports.forgotPasswordReset = async (req, res, next) => {
+  try {
+    const { phone, otp, password } = req.body;
+    if (!phone || !otp || !password) {
+      return res.status(400).json({ success: false, message: 'Phone, OTP, and password are required' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 6 characters long' });
+    }
+
+    // Standardize Sri Lankan phone number format
+    let formattedPhone = phone.trim().replace(/[\s\-\+\(\)]/g, '');
+    if (formattedPhone.startsWith('0')) {
+      formattedPhone = '94' + formattedPhone.slice(1);
+    } else if (!formattedPhone.startsWith('94') && formattedPhone.length === 9) {
+      formattedPhone = '94' + formattedPhone;
+    }
+
+    const record = await OtpVerification.findOne({ phone: formattedPhone, otp });
+    if (!record) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired verification OTP' });
+    }
+
+    const user = await User.findOne({ phone: formattedPhone });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'Registered user not found for this phone number' });
+    }
+
+    // Update password
+    user.password = password;
+    await user.save();
+
+    // Delete OTP verification record once used
+    await OtpVerification.deleteMany({ phone: formattedPhone });
+
+    res.json({
+      success: true,
+      message: 'Password reset successfully'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
