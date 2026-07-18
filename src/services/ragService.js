@@ -66,7 +66,7 @@ const processAndStorePDF = async (filePath, documentId) => {
     }
     
     if (vectors.length > 0) {
-      await pineconeIndex.upsert(vectors);
+      await pineconeIndex.upsert({ records: vectors });
     }
     
     // Update doc status
@@ -108,7 +108,7 @@ const generateChatResponse = async (messages, context, roleType) => {
     
 IMPORTANT INSTRUCTION: Use the provided CONTEXT to answer the user's questions if possible. If the user asks for a cultivation plan or crop recommendation, use your general knowledge as an agricultural expert to provide a comprehensive, 6-month plan or detailed recommendation. For specific internal records, state if you don't have them.`;
   } else if (roleType === 'consumer') {
-    systemPrompt += `\nYou are talking to a Consumer. CRITICAL INSTRUCTION: You MUST ONLY answer questions related to recommending which agricultural products to buy based on the current season and selling history. Do not provide ANY other information. If they ask about anything else (like crop diseases, farming methods, or general knowledge), you MUST politely decline and state: "I can only assist you with product recommendations for the current season and purchase history."`;
+    systemPrompt += `\nYou are an AI assistant helping a Consumer. You can answer general questions about agricultural products, seasonality, highest demand products, market trends, and purchasing. Be helpful and conversational. If the user asks for seasonal recommendations, provide a helpful list of 3-5 crops suitable for the current season. Only if the question is completely unrelated to agriculture, products, or food, then you should politely decline and state: "I can only assist you with product recommendations for the current season and purchase history."`;
   }
 
   systemPrompt += `\n\nCONTEXT:\n${context || 'No documents available.'}`;
