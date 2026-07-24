@@ -15,7 +15,7 @@ exports.getProducts = async (req, res, next) => {
     if (search) query.name = { $regex: search, $options: 'i' };
 
     const products = await Product.find(query)
-      .populate('farmer', 'name avatar location')
+      .populate('farmer', 'name avatar location address')
       .skip((page - 1) * limit)
       .limit(Number(limit))
       .sort('-createdAt');
@@ -80,7 +80,7 @@ exports.getProduct = async (req, res, next) => {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(404).json({ success: false, message: 'Invalid product ID format' });
     }
-    const product = await Product.findById(req.params.id).populate('farmer', 'name avatar location phone');
+    const product = await Product.findById(req.params.id).populate('farmer', 'name avatar location address phone');
     if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
     
     if (product.status !== 'Active' || !product.isAvailable) {
