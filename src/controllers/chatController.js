@@ -19,7 +19,12 @@ exports.sendMessage = async (req, res, next) => {
       user.freeChatCount = 0;
     }
 
-    if (!user.isSubscribed && user.freeChatCount <= 0) {
+    let currentFreeCount = user.freeChatCount;
+    if (currentFreeCount === undefined || currentFreeCount === null || isNaN(currentFreeCount)) {
+      currentFreeCount = 4;
+    }
+
+    if (!user.isSubscribed && currentFreeCount <= 0) {
       return res.status(402).json({ 
         success: false, 
         message: 'Free chat limit reached or subscription expired. Please subscribe to continue.',
@@ -91,7 +96,7 @@ exports.sendMessage = async (req, res, next) => {
     );
 
     if (!user.isSubscribed) {
-      const newCount = user.freeChatCount - 1;
+      const newCount = Math.max(0, currentFreeCount - 1);
       await User.update({ id: user.id }, { freeChatCount: newCount });
       user.freeChatCount = newCount;
     }
