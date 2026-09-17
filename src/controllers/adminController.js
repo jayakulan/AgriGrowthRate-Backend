@@ -13,24 +13,18 @@ exports.getDashboardAnalytics = async (req, res, next) => {
   try {
     const totalUsers = await User.countDocuments();
     const farmers = await User.countDocuments({ role: 'farmer' });
-    const consumers = await User.countDocuments({ role: 'consumer' });
+    const consumers = await User.countDocuments({ role: { $in: ['consumer', 'retailer'] } });
     const adminCount = await User.countDocuments({ role: 'admin' });
     
     const activeFarmers = await User.countDocuments({
       role: 'farmer',
-      $or: [
-        { status: { $regex: /^enabled$/i } },
-        { status: { $regex: /^active$/i } },
-        { isVerified: true }
-      ]
+      isVerified: true,
+      status: { $ne: 'Disabled' }
     });
     const activeRetailers = await User.countDocuments({
-      $or: [{ role: 'retailer' }, { role: 'consumer' }],
-      $or: [
-        { status: { $regex: /^enabled$/i } },
-        { status: { $regex: /^active$/i } },
-        { isVerified: true }
-      ]
+      role: { $in: ['retailer', 'consumer'] },
+      isVerified: true,
+      status: { $ne: 'Disabled' }
     });
     const approvedProducts = await Product.countDocuments({
       $or: [
@@ -130,11 +124,18 @@ exports.getAllUsers = async (req, res, next) => {
     const skip = (page - 1) * limit;
     
     let query = {};
-    if (role) query.role = role;
+    if (role) {
+      if (role === 'consumer' || role === 'retailer') {
+        query.role = { $in: ['consumer', 'retailer'] };
+      } else {
+        query.role = role;
+      }
+    }
     if (status) query.isVerified = status === 'active';
     if (search) query.$or = [
       { name: { $regex: search, $options: 'i' } },
-      { email: { $regex: search, $options: 'i' } }
+      { email: { $regex: search, $options: 'i' } },
+      { phone: { $regex: search, $options: 'i' } }
     ];
 
     const users = await User.find(query)
@@ -464,19 +465,13 @@ exports.getReports = async (req, res, next) => {
     // Active Users (enabled farmers + retailers)
     const activeFarmers = await User.countDocuments({
       role: 'farmer',
-      $or: [
-        { status: { $regex: /^enabled$/i } },
-        { status: { $regex: /^active$/i } },
-        { isVerified: true }
-      ]
+      isVerified: true,
+      status: { $ne: 'Disabled' }
     });
     const activeRetailers = await User.countDocuments({
-      $or: [{ role: 'retailer' }, { role: 'consumer' }],
-      $or: [
-        { status: { $regex: /^enabled$/i } },
-        { status: { $regex: /^active$/i } },
-        { isVerified: true }
-      ]
+      role: { $in: ['retailer', 'consumer'] },
+      isVerified: true,
+      status: { $ne: 'Disabled' }
     });
     const activeUsers = activeFarmers + activeRetailers;
 
