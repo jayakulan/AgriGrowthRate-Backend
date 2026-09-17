@@ -1,12 +1,30 @@
-const mongoose = require('mongoose');
+const { dynamoose } = require('../config/awsConfig');
+const { v4: uuidv4 } = require('uuid');
 
-const otpVerificationSchema = new mongoose.Schema(
+const otpVerificationSchema = new dynamoose.Schema(
   {
-    phone: { type: String, required: true },
+    id: {
+      type: String,
+      hashKey: true,
+      default: () => uuidv4()
+    },
+    phone: {
+      type: String,
+      required: true,
+      index: {
+        name: 'phoneOtpIndex',
+        global: true
+      }
+    },
     otp: { type: String, required: true },
-    createdAt: { type: Date, default: Date.now, expires: 600 }, // Auto-expires after 10 minutes (600 seconds)
+    expiresAt: { type: Number, default: () => Date.now() + 600000 } // 10 minutes from creation
   },
   { timestamps: true }
 );
 
-module.exports = mongoose.model('OtpVerification', otpVerificationSchema);
+const OtpVerification = dynamoose.model('OtpVerification', otpVerificationSchema, {
+  create: true,
+  waitForActive: false
+});
+
+module.exports = OtpVerification;

@@ -3,7 +3,9 @@ const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
 const Order = require('../models/Order');
 const Product = require('../models/Product');
+const User = require('../models/User');
 const Conversation = require('../models/Conversation');
+const { findById, find } = require('../utils/dbHelpers');
 
 // @desc  Create order
 // @route POST /api/orders
@@ -21,7 +23,7 @@ router.post('/', protect, async (req, res, next) => {
 
     // Verify products and calculate total
     for (const item of items) {
-      const product = await Product.findById(item.product);
+      const product = await findById(Product, item.product);
       if (!product) {
         return res.status(404).json({ success: false, message: `Product not found: ${item.product}` });
       }
@@ -34,26 +36,23 @@ router.post('/', protect, async (req, res, next) => {
         return res.status(400).json({ success: false, message: `Insufficient stock for product ${product.name}` });
       }
 
-      // Decrement stock
-      product.stock -= item.quantity;
-      if (product.stock === 0) {
-        product.isAvailable = false;
-      }
-      await product.save();
+      const newStock = product.stock - item.quantity;
+      const isAvailable = newStock > 0;
+      await Product.update({ id: product.id }, { stock: newStock, isAvailable });
 
       totalAmount += product.price * item.quantity;
       orderItems.push({
-        product: product._id,
+        product: product.id,
+        productName: product.name,
         quantity: item.quantity,
         price: product.price
       });
     }
 
-    // Generate confirmation number
     const confirmNum = 'AGR-' + Math.floor(100000 + Math.random() * 900000).toString();
 
     const order = await Order.create({
-      consumer: req.user._id,
+      consumer: req.user.id,
       items: orderItems,
       totalAmount,
       paymentMethod: paymentMethod || 'cash',
@@ -67,30 +66,28 @@ router.post('/', protect, async (req, res, next) => {
       }
     });
 
-    // Create a chat conversation for each unique farmer involved in the order
     const farmerIds = new Set();
     for (const item of items) {
-      const product = await Product.findById(item.product);
+      const product = await findById(Product, item.product);
       if (product && product.farmer) {
-        farmerIds.add(product.farmer.toString());
+        farmerIds.add(product.farmer);
       }
     }
 
     for (const farmerId of farmerIds) {
-      // Check if conversation already exists
-      let conversation = await Conversation.findOne({
-        participants: { $all: [req.user._id, farmerId] }
-      });
+      const allConvs = await find(Conversation);
+      const existing = allConvs.find(c => 
+        c.participants && c.participants.includes(req.user.id) && c.participants.includes(farmerId)
+      );
 
-      if (!conversation) {
+      if (!existing) {
         await Conversation.create({
-          participants: [req.user._id, farmerId],
-          order: order._id
+          participants: [req.user.id, farmerId],
+          order: order.id
         });
       }
     }
 
-    // Send order confirmation number via SMS using text.lk
     if (req.user.phone) {
       const smsUrl = process.env.TEXT_LK_API_URL;
       const smsToken = process.env.TEXT_LK_API_TOKEN;
@@ -112,12 +109,9 @@ router.post('/', protect, async (req, res, next) => {
               message: `Your AgriGrowthRate order has been placed successfully! Confirmation Number: ${confirmNum}. Total: $${totalAmount.toFixed(2)}`
             })
           });
-          console.log(`[Order SMS] Successfully sent confirmation SMS to ${req.user.phone}`);
         } catch (smsErr) {
           console.error('Failed to send order confirmation SMS:', smsErr);
         }
-      } else {
-        console.warn('[SMS Warn] Gateway variables missing. SMS not sent.');
       }
     }
 
@@ -140,25 +134,32 @@ router.get('/farmer', protect, async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'Not authorized as a farmer' });
     }
 
-    // 1. Find all products owned by this farmer
-    const products = await Product.find({ farmer: req.user._id });
-    const productIds = products.map(p => p._id);
+    const allProducts = await find(Product, { farmer: req.user.id });
+    const productIds = allProducts.map(p => p.id || p._id);
 
-    // 2. Find orders containing any of these products
-    const orders = await Order.find({ 'items.product': { $in: productIds } })
-      .populate('consumer', 'name email avatar phone')
-      .populate('items.product', 'name price images farmer')
-      .sort('-createdAt');
+    const allOrders = await find(Order);
+    const farmerOrders = [];
 
-    // 3. For each order, filter items to only include this farmer's products
-    // (if a multi-vendor order model is used, though in "Buy Now" it's 1 product per order)
-    const farmerOrders = orders.map(order => {
-      const orderObj = order.toObject();
-      orderObj.items = orderObj.items.filter(item => 
-        item.product && item.product.farmer && item.product.farmer.toString() === req.user._id.toString()
-      );
-      return orderObj;
-    }).filter(order => order.items.length > 0);
+    for (const order of allOrders) {
+      const relevantItems = order.items ? order.items.filter(item => {
+        const pid = typeof item.product === 'object' ? (item.product?.id || item.product?._id) : item.product;
+        return productIds.includes(pid);
+      }) : [];
+      if (relevantItems.length > 0) {
+        const consumer = await findById(User, order.consumer);
+        farmerOrders.push({
+          ...order,
+          consumer: consumer ? {
+            id: consumer.id,
+            name: consumer.name,
+            email: consumer.email,
+            avatar: consumer.avatar,
+            phone: consumer.phone
+          } : null,
+          items: relevantItems
+        });
+      }
+    }
 
     res.json({
       success: true,
@@ -174,13 +175,34 @@ router.get('/farmer', protect, async (req, res, next) => {
 // @access Private
 router.get('/my-orders', protect, async (req, res, next) => {
   try {
-    const orders = await Order.find({ consumer: req.user._id })
-      .populate('items.product', 'name price images')
-      .sort('-createdAt');
+    const orders = await find(Order, { consumer: req.user.id });
+    
+    const populatedOrders = await Promise.all(
+      orders.map(async (order) => {
+        const items = await Promise.all(
+          (order.items || []).map(async (item) => {
+            const product = await findById(Product, item.product);
+            return {
+              ...item,
+              product: product ? {
+                id: product.id,
+                name: product.name,
+                price: product.price,
+                images: product.images
+              } : null
+            };
+          })
+        );
+        return {
+          ...order,
+          items
+        };
+      })
+    );
 
     res.json({
       success: true,
-      data: orders
+      data: populatedOrders
     });
   } catch (error) {
     next(error);
@@ -197,21 +219,22 @@ router.put('/:id/status', protect, async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Please provide a status' });
     }
 
-    const order = await Order.findById(req.id || req.params.id);
+    const order = await findById(Order, req.params.id);
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
-    order.status = status;
+    const updateFields = { status };
     if (status === 'delivered') {
-      order.deliveredAt = Date.now();
-      order.paymentStatus = 'paid'; // Automatically mark paid if delivered
+      updateFields.deliveredAt = new Date().toISOString();
+      updateFields.paymentStatus = 'paid';
     }
-    await order.save();
+
+    const updated = await Order.update({ id: req.params.id }, updateFields);
 
     res.json({
       success: true,
-      data: order,
+      data: updated,
       message: `Order status updated to ${status}`
     });
   } catch (error) {
@@ -221,18 +244,12 @@ router.put('/:id/status', protect, async (req, res, next) => {
 
 router.put('/:id/cancel', protect, async (req, res, next) => {
   try {
-    const order = await Order.findById(req.params.id).populate('items.product');
+    const order = await findById(Order, req.params.id);
     if (!order) {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
-    // Verify authorization: either the consumer or the farmer who owns the product can cancel
-    const isConsumer = order.consumer.toString() === req.user._id.toString();
-    const isFarmer = order.items.some(item => 
-      item.product && item.product.farmer && item.product.farmer.toString() === req.user._id.toString()
-    );
-
-    if (!isConsumer && !isFarmer && req.user.role !== 'admin') {
+    if (order.consumer !== req.user.id && req.user.role !== 'admin') {
       return res.status(403).json({ success: false, message: 'Not authorized to cancel this order' });
     }
 
@@ -240,22 +257,19 @@ router.put('/:id/cancel', protect, async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Only pending orders can be cancelled' });
     }
 
-    // Revert product stock
-    for (const item of order.items) {
-      const product = await Product.findById(item.product._id || item.product);
+    for (const item of (order.items || [])) {
+      const product = await findById(Product, item.product);
       if (product) {
-        product.stock += item.quantity;
-        product.isAvailable = true; // Mark as available again if stock was 0
-        await product.save();
+        const newStock = product.stock + item.quantity;
+        await Product.update({ id: product.id }, { stock: newStock, isAvailable: true });
       }
     }
 
-    order.status = 'cancelled';
-    await order.save();
+    const updated = await Order.update({ id: req.params.id }, { status: 'cancelled' });
 
     res.json({
       success: true,
-      data: order,
+      data: updated,
       message: 'Order cancelled successfully and stock updated'
     });
   } catch (error) {

@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const { findById } = require('../utils/dbHelpers');
 
 // Protect routes - verify JWT
 exports.protect = async (req, res, next) => {
@@ -15,8 +16,12 @@ exports.protect = async (req, res, next) => {
     if (!token) return res.status(401).json({ success: false, message: 'Not authorized, no token' });
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = await User.findById(decoded.id).select('-password -refreshToken');
-    if (!req.user) return res.status(401).json({ success: false, message: 'User not found' });
+    const user = await findById(User, decoded.id);
+    if (!user) return res.status(401).json({ success: false, message: 'User not found' });
+    
+    delete user.password;
+    delete user.refreshToken;
+    req.user = user;
     next();
   } catch (error) {
     res.status(401).json({ success: false, message: 'Not authorized, token failed' });

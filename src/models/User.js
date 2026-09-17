@@ -1,15 +1,27 @@
-const mongoose = require('mongoose');
+const { dynamoose } = require('../config/awsConfig');
 const bcrypt = require('bcryptjs');
+const { v4: uuidv4 } = require('uuid');
 
-const userSchema = new mongoose.Schema(
+const userSchema = new dynamoose.Schema(
   {
-    name: { type: String, required: true, trim: true },
-    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
-    password: { type: String, required: true, minlength: 6 },
+    id: {
+      type: String,
+      hashKey: true,
+      default: () => uuidv4()
+    },
+    name: { type: String, required: true },
+    email: {
+      type: String,
+      required: true,
+      index: {
+        name: 'emailIndex',
+        global: true
+      }
+    },
+    password: { type: String, required: true },
     role: {
       type: String,
-      enum: ['farmer', 'consumer', 'admin', 'retailer'],
-      default: 'consumer',
+      default: 'consumer'
     },
     status: { type: String, default: 'Enabled' },
     avatar: { type: String, default: '' },
@@ -17,29 +29,36 @@ const userSchema = new mongoose.Schema(
     address: { type: String, default: '' },
     location: { type: String, default: '' },
     bio: { type: String, default: '' },
-    favoriteFarmers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    favoriteFarmers: {
+      type: Array,
+      schema: [String],
+      default: []
+    },
     isVerified: { type: Boolean, default: false },
     farmerCardNo: { type: String, default: '' },
     refreshToken: { type: String, default: '' },
-    freeChatCount: { type: Number, default: 4 }, // AI chat limits
+    freeChatCount: { type: Number, default: 4 },
     isSubscribed: { type: Boolean, default: false },
-    subscriptionExpiry: { type: Date, default: null },
-    stripeCustomerId: { type: String, default: '' },
+    subscriptionExpiry: { type: Number, default: null },
+    stripeCustomerId: { type: String, default: '' }
   },
-  { timestamps: true }
+  {
+    timestamps: true
+  }
 );
 
-// Hash password before saving
-userSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) return next();
-  const salt = await bcrypt.genSalt(10);
-  this.password = await bcrypt.hash(this.password, salt);
-  next();
+const User = dynamoose.model('User', userSchema, {
+  create: true,
+  waitForActive: false
 });
 
-// Compare passwords
-userSchema.methods.matchPassword = async function (enteredPassword) {
+User.hashPassword = async function (password) {
+  const salt = await bcrypt.genSalt(10);
+  return await bcrypt.hash(password, salt);
+};
+
+User.prototype.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };
 
-module.exports = mongoose.model('User', userSchema);
+module.exports = User;

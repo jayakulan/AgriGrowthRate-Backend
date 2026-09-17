@@ -1,4 +1,5 @@
 const ContactMessage = require('../models/ContactMessage');
+const { findById, find } = require('../utils/dbHelpers');
 
 // @desc    Submit a contact message / inquiry
 // @route   POST /api/contact
@@ -46,21 +47,19 @@ exports.submitContactMessage = async (req, res, next) => {
 exports.getContactMessages = async (req, res, next) => {
   try {
     const { status, page = 1, limit = 20 } = req.query;
-    const filter = {};
+    let messages = await find(ContactMessage);
+
     if (status) {
-      filter.status = status;
+      messages = messages.filter(m => m.status === status);
     }
 
-    const skip = (Number(page) - 1) * Number(limit);
-    const total = await ContactMessage.countDocuments(filter);
-    const messages = await ContactMessage.find(filter)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(Number(limit));
+    const total = messages.length;
+    const startIndex = (Number(page) - 1) * Number(limit);
+    const paginated = messages.slice(startIndex, startIndex + Number(limit));
 
     res.json({
       success: true,
-      data: messages,
+      data: paginated,
       pagination: {
         total,
         page: Number(page),
@@ -87,12 +86,7 @@ exports.updateMessageStatus = async (req, res, next) => {
       });
     }
 
-    const message = await ContactMessage.findByIdAndUpdate(
-      id,
-      { status },
-      { new: true, runValidators: true }
-    );
-
+    const message = await findById(ContactMessage, id);
     if (!message) {
       return res.status(404).json({
         success: false,
@@ -100,10 +94,12 @@ exports.updateMessageStatus = async (req, res, next) => {
       });
     }
 
+    const updated = await ContactMessage.update({ id }, { status });
+
     res.json({
       success: true,
       message: `Message status updated to ${status}`,
-      data: message,
+      data: updated,
     });
   } catch (error) {
     next(error);
@@ -116,7 +112,7 @@ exports.updateMessageStatus = async (req, res, next) => {
 exports.deleteContactMessage = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const message = await ContactMessage.findByIdAndDelete(id);
+    const message = await findById(ContactMessage, id);
 
     if (!message) {
       return res.status(404).json({
@@ -124,6 +120,8 @@ exports.deleteContactMessage = async (req, res, next) => {
         message: 'Contact message not found',
       });
     }
+
+    await ContactMessage.delete(id);
 
     res.json({
       success: true,
