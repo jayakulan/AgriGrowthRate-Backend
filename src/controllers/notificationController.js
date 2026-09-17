@@ -1,13 +1,12 @@
 const Notification = require('../models/Notification');
+const { find, findById } = require('../utils/dbHelpers');
 
 // @desc    Get user notifications
 // @route   GET /api/notifications
 // @access  Private
 exports.getNotifications = async (req, res, next) => {
   try {
-    const notifications = await Notification.find({ recipient: req.user._id })
-      .sort({ createdAt: -1 });
-    
+    const notifications = await find(Notification, { recipient: req.user.id });
     res.json({ success: true, data: notifications });
   } catch (error) {
     next(error);
@@ -22,17 +21,17 @@ exports.markAsRead = async (req, res, next) => {
     const { id } = req.body;
 
     if (id) {
-      // Mark specific notification as read
-      await Notification.findOneAndUpdate(
-        { _id: id, recipient: req.user._id },
-        { read: true }
-      );
+      const notif = await findById(Notification, id);
+      if (notif && notif.recipient === req.user.id) {
+        await Notification.update({ id }, { read: true });
+      }
     } else {
-      // Mark all notifications as read for this user
-      await Notification.updateMany(
-        { recipient: req.user._id, read: false },
-        { read: true }
-      );
+      const notifications = await find(Notification, { recipient: req.user.id });
+      for (const n of notifications) {
+        if (!n.read) {
+          await Notification.update({ id: n.id }, { read: true });
+        }
+      }
     }
 
     res.json({ success: true, message: 'Notifications updated' });

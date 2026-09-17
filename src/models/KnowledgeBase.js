@@ -1,14 +1,26 @@
-const mongoose = require('mongoose');
+const { dynamoose } = require('../config/awsConfig');
+const { v4: uuidv4 } = require('uuid');
 
-const knowledgeBaseSchema = new mongoose.Schema(
+const knowledgeBaseSchema = new dynamoose.Schema(
   {
+    id: {
+      type: String,
+      hashKey: true,
+      default: () => uuidv4()
+    },
     filename: { type: String, required: true },
     originalName: { type: String, required: true },
     fileSize: { type: Number, required: true },
-    uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    status: { type: String, enum: ['processing', 'active', 'failed'], default: 'processing' },
+    uploadedBy: { type: String, required: true },
+    s3Url: { type: String, default: '' },
+    status: { type: String, default: 'processing' }
   },
   { timestamps: true }
 );
 
-module.exports = mongoose.model('KnowledgeBase', knowledgeBaseSchema);
+const KnowledgeBase = dynamoose.model('KnowledgeBase', knowledgeBaseSchema, {
+  create: true,
+  waitForActive: false
+});
+
+module.exports = KnowledgeBase;

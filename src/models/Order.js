@@ -1,44 +1,73 @@
-const mongoose = require('mongoose');
+const { dynamoose } = require('../config/awsConfig');
+const { v4: uuidv4 } = require('uuid');
 
-const orderItemSchema = new mongoose.Schema({
-  product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
-  quantity: { type: Number, required: true, min: 1 },
-  price: { type: Number, required: true },
+const orderItemSchema = new dynamoose.Schema({
+  product: { type: String, required: true },
+  productName: { type: String, default: '' },
+  quantity: { type: Number, required: true },
+  price: { type: Number, required: true }
 });
 
-const orderSchema = new mongoose.Schema(
+const shippingAddressSchema = new dynamoose.Schema({
+  street: { type: String, default: '' },
+  city: { type: String, default: '' },
+  state: { type: String, default: '' },
+  pincode: { type: String, default: '' },
+  country: { type: String, default: 'Sri Lanka' }
+});
+
+const orderSchema = new dynamoose.Schema(
   {
-    consumer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    items: [orderItemSchema],
+    id: {
+      type: String,
+      hashKey: true,
+      default: () => uuidv4()
+    },
+    consumer: {
+      type: String,
+      required: true,
+      index: {
+        name: 'consumerIndex',
+        global: true
+      }
+    },
+    items: {
+      type: Array,
+      schema: [orderItemSchema],
+      default: []
+    },
     totalAmount: { type: Number, required: true },
     status: {
       type: String,
-      enum: ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'],
-      default: 'pending',
+      default: 'pending'
     },
     orderStatus: {
       type: String,
-      default: 'Delivered',
+      default: 'Delivered'
     },
     paymentStatus: {
       type: String,
-      enum: ['pending', 'paid', 'failed', 'refunded'],
-      default: 'pending',
+      default: 'pending'
     },
     paymentMethod: { type: String, default: 'cash' },
     shippingAddress: {
-      street: String,
-      city: String,
-      state: String,
-      pincode: String,
-      country: { type: String, default: 'India' },
+      type: Object,
+      schema: shippingAddressSchema,
+      default: {}
     },
-    orderConfirmationNumber: { type: String, unique: true },
-    deliveredAt: { type: Date },
+    orderConfirmationNumber: { type: String, default: () => `ORD-${Date.now()}` },
+    deliveredAt: { type: String, default: '' },
     isReviewedByConsumer: { type: Boolean, default: false },
-    isReviewedByFarmer: { type: Boolean, default: false },
+    isReviewedByFarmer: { type: Boolean, default: false }
   },
-  { timestamps: true }
+  {
+    timestamps: true
+  }
 );
 
-module.exports = mongoose.model('Order', orderSchema);
+const Order = dynamoose.model('Order', orderSchema, {
+  create: true,
+  waitForActive: false
+});
+
+module.exports = Order;

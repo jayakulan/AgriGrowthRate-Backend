@@ -1,44 +1,77 @@
-const mongoose = require('mongoose');
+const { dynamoose } = require('../config/awsConfig');
+const { v4: uuidv4 } = require('uuid');
 
-const productSchema = new mongoose.Schema(
+const reviewSchema = new dynamoose.Schema({
+  id: { type: String, default: () => uuidv4() },
+  userId: { type: String },
+  userName: { type: String, default: '' },
+  comment: { type: String, default: '' },
+  rating: { type: Number, default: 5 },
+  date: { type: Number, default: () => Date.now() }
+});
+
+const productSchema = new dynamoose.Schema(
   {
-    name: { type: String, required: true, trim: true },
+    id: {
+      type: String,
+      hashKey: true,
+      default: () => uuidv4()
+    },
+    name: { type: String, required: true },
     description: { type: String, required: true },
-    price: { type: Number, required: true, min: 0 },
+    price: { type: Number, required: true },
     category: {
       type: String,
-      enum: ['vegetables', 'fruits', 'grains', 'dairy', 'herbs', 'other'],
       required: true,
+      index: {
+        name: 'categoryIndex',
+        global: true
+      }
     },
-    images: [{ type: String }],
+    images: {
+      type: Array,
+      schema: [String],
+      default: []
+    },
     isOrganic: { type: Boolean, default: false },
-    stock: { type: Number, default: 0, min: 0 },
+    stock: { type: Number, default: 0 },
     unit: { type: String, default: 'kg' },
-    totalWeight: { type: Number, default: 0, min: 0 },
-    farmer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    totalWeight: { type: Number, default: 0 },
+    farmer: {
+      type: String,
+      required: true,
+      index: {
+        name: 'farmerIndex',
+        global: true
+      }
+    },
+    farmerName: { type: String, default: '' },
     rating: { type: Number, default: 0 },
-    reviews: [
-      {
-        user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-        comment: String,
-        rating: Number,
-        date: { type: Date, default: Date.now },
-      },
-    ],
+    reviews: {
+      type: Array,
+      schema: [reviewSchema],
+      default: []
+    },
     isAvailable: { type: Boolean, default: true },
     status: {
       type: String,
-      enum: ['Active', 'Inactive', 'Pending Review', 'Rejected'],
-      default: 'Pending Review',
+      default: 'Pending Review'
     },
     approvalStatus: {
       type: String,
-      default: 'Approved',
+      default: 'Approved'
     },
-    harvestDate: { type: Date },
-    location: { type: String },
+    harvestDate: { type: String, default: '' },
+    location: { type: String, default: '' }
   },
-  { timestamps: true }
+  {
+    timestamps: true
+  }
 );
 
-module.exports = mongoose.model('Product', productSchema);
+const Product = dynamoose.model('Product', productSchema, {
+  create: true,
+  waitForActive: false
+});
+
+module.exports = Product;

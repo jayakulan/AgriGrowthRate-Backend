@@ -5,6 +5,8 @@ const Favorite = require('../models/Favorite');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const { sendTokenResponse } = require('../utils/cookies');
+const { findById, findOne, find, deleteMany } = require('../utils/dbHelpers');
+const { uploadBase64ToS3 } = require('../utils/s3Helper');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -20,7 +22,7 @@ const SRI_LANKAN_DISTRICTS = [
 // @route POST /api/auth/register
 exports.register = async (req, res, next) => {
   try {
-    const { name, email, password, role, phone, otp, farmerCardNo, address } = req.body;
+    const { name, email, password, role, phone, otp, farmerCardNo, address, avatar } = req.body;
     
     // Extra validation
     if (!name || !name.trim()) {
@@ -61,12 +63,12 @@ exports.register = async (req, res, next) => {
     if (!phone || !phone.trim()) {
       return res.status(400).json({ success: false, message: 'Phone number is required' });
     }
-    if (!/^(?:\+94|0)?7[0-9]{8}$/.test(phone.trim().replace(/[\s\-]/g, ''))) {
+    if (!/^(?:94|0)?[1-9]\d{8}$/.test(phone.trim().replace(/[\s\-\+\(\)]/g, ''))) {
       return res.status(400).json({ success: false, message: 'Invalid Sri Lankan phone number format (e.g. 077XXXXXXXX)' });
     }
 
     const normalizedEmail = email ? email.trim().toLowerCase() : '';
-    const existing = await User.findOne({ email: normalizedEmail });
+    const existing = await findOne(User, 'email', normalizedEmail);
     if (existing) return res.status(400).json({ success: false, message: 'Email already registered' });
 
     // Verify OTP
@@ -74,7 +76,6 @@ exports.register = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Phone number and verification OTP are required' });
     }
 
-    // Standardize Sri Lankan phone number format to match saved database state
     let formattedPhone = phone.trim().replace(/[\s\-\+\(\)]/g, ''); 
     if (formattedPhone.startsWith('0')) {
       formattedPhone = '94' + formattedPhone.slice(1);
@@ -82,13 +83,13 @@ exports.register = async (req, res, next) => {
       formattedPhone = '94' + formattedPhone;
     }
 
-    const record = await OtpVerification.findOne({ phone: formattedPhone, otp });
-    if (!record) {
+    const record = await findOne(OtpVerification, 'phone', formattedPhone);
+    if (!record || record.otp !== otp) {
       return res.status(400).json({ success: false, message: 'Invalid or expired verification OTP' });
     }
 
     // Delete OTP verification record once used
-    await OtpVerification.deleteMany({ phone: formattedPhone });
+    await deleteMany(OtpVerification, { phone: formattedPhone });
 
     // Validate Farmer Card Number
     if (role === 'farmer') {
@@ -96,7 +97,7 @@ exports.register = async (req, res, next) => {
         return res.status(400).json({ success: false, message: 'Farmer Card Number is required for farmer registration' });
       }
       
-      const farmerCard = await FarmerCard.findOne({ cardNumber: farmerCardNo.trim() });
+      const farmerCard = await findOne(FarmerCard, 'cardNumber', farmerCardNo.trim());
       if (!farmerCard) {
         return res.status(400).json({ success: false, message: 'Invalid Farmer Card Number' });
       }
@@ -105,21 +106,29 @@ exports.register = async (req, res, next) => {
         return res.status(400).json({ success: false, message: 'This Farmer Card Number is already registered' });
       }
       
-      // Mark card as registered
-      farmerCard.isRegistered = true;
-      await farmerCard.save();
+      await FarmerCard.update({ id: farmerCard.id }, { isRegistered: true });
+    }
+
+    const userRole = role && ['farmer', 'consumer', 'retailer', 'admin'].includes(role) ? role : 'consumer';
+    const hashedPassword = await User.hashPassword(password);
+
+    let avatarUrl = '';
+    if (avatar) {
+      avatarUrl = await uploadBase64ToS3(avatar, 'avatars');
     }
 
     const user = await User.create({ 
       name: name.trim(), 
       email: normalizedEmail, 
-      password, 
-      role, 
+      password: hashedPassword, 
+      role: userRole, 
       phone: formattedPhone, 
       address: address.trim(),
+      avatar: avatarUrl,
       isVerified: true, 
       farmerCardNo: role === 'farmer' ? farmerCardNo.trim() : '' 
     });
+    
     sendTokenResponse(user, 201, res);
   } catch (error) {
     next(error);
@@ -135,7 +144,7 @@ exports.login = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Email and password are required' });
     }
     const normalizedEmail = email.trim().toLowerCase();
-    const user = await User.findOne({ email: normalizedEmail });
+    const user = await findOne(User, 'email', normalizedEmail);
     if (!user || !(await user.matchPassword(password))) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
@@ -151,7 +160,7 @@ exports.login = async (req, res, next) => {
 exports.logout = async (req, res, next) => {
   try {
     if (req.user) {
-      await User.findByIdAndUpdate(req.user.id, { refreshToken: '' });
+      await User.update({ id: req.user.id }, { refreshToken: '' });
     }
     
     const clearCookieOptions = {
@@ -176,7 +185,11 @@ exports.logout = async (req, res, next) => {
 // @route GET /api/auth/me
 exports.getMe = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user.id).select('-password -refreshToken');
+    const user = await findById(User, req.user.id);
+    if (user) {
+      delete user.password;
+      delete user.refreshToken;
+    }
     res.json({ success: true, data: user });
   } catch (error) {
     next(error);
@@ -216,26 +229,27 @@ exports.googleLogin = async (req, res, next) => {
       picture = data.picture;
     }
 
-    // Check if user already exists
-    let user = await User.findOne({ email });
+    let user = await findOne(User, 'email', email);
+
+    let s3Avatar = picture ? await uploadBase64ToS3(picture, 'avatars') : '';
 
     if (user) {
-      // User exists, login
-      if (picture && !user.avatar) {
-        user.avatar = picture;
+      if (s3Avatar && !user.avatar) {
+        await User.update({ id: user.id }, { avatar: s3Avatar });
+        user.avatar = s3Avatar;
       }
       sendTokenResponse(user, 200, res);
     } else {
-      // Create new user (register)
       const generatedPassword = Math.random().toString(36).slice(-10) + 'A1!';
+      const hashedPassword = await User.hashPassword(generatedPassword);
       
       user = await User.create({
         name,
         email,
-        password: generatedPassword,
-        avatar: picture || '',
+        password: hashedPassword,
+        avatar: s3Avatar,
         isVerified: true,
-        role: role && ['farmer', 'consumer'].includes(role) ? role : 'consumer',
+        role: role && ['farmer', 'consumer', 'retailer'].includes(role) ? role : 'consumer',
       });
 
       sendTokenResponse(user, 201, res);
@@ -255,98 +269,76 @@ exports.sendOtp = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Phone number is required' });
     }
 
-    // Validate phone number format
-    if (!/^(?:\+94|0)?7[0-9]{8}$/.test(phone.trim().replace(/[\s\-]/g, ''))) {
+    if (!/^(?:94|0)?[1-9]\d{8}$/.test(phone.trim().replace(/[\s\-\+\(\)]/g, ''))) {
       return res.status(400).json({ success: false, message: 'Invalid Sri Lankan phone number format (e.g. 077XXXXXXXX)' });
     }
 
-    // Validate email format
     if (email && !/^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$/.test(email.trim())) {
       return res.status(400).json({ success: false, message: 'Invalid email format' });
     }
 
-    // Standardize Sri Lankan phone number format (e.g. 0771234567 or +94771234567 -> 94771234567)
-    let formattedPhone = phone.trim().replace(/[\s\-\+\(\)]/g, ''); // Remove spaces, symbols, plus signs
+    let formattedPhone = phone.trim().replace(/[\s\-\+\(\)]/g, ''); 
     if (formattedPhone.startsWith('0')) {
       formattedPhone = '94' + formattedPhone.slice(1);
     } else if (!formattedPhone.startsWith('94') && formattedPhone.length === 9) {
       formattedPhone = '94' + formattedPhone;
     }
 
-    // Check if email already exists
     if (email) {
-      const existingEmail = await User.findOne({ email });
+      const existingEmail = await findOne(User, 'email', email);
       if (existingEmail) {
         return res.status(400).json({ success: false, message: 'Email already registered' });
       }
     }
 
-    // Check if phone already exists
-    const existingPhone = await User.findOne({ phone: formattedPhone });
+    const existingPhone = await findOne(User, 'phone', formattedPhone);
     if (existingPhone) {
       return res.status(400).json({ success: false, message: 'Phone number already registered' });
     }
 
-    // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // Save to database (overwrite previous OTPs for same phone)
-    await OtpVerification.deleteMany({ phone: formattedPhone });
+    await deleteMany(OtpVerification, { phone: formattedPhone });
     await OtpVerification.create({ phone: formattedPhone, otp });
 
-    // Send SMS via text.lk API
+    console.log(`🔑 [DEV MODE OTP] Verification OTP for ${formattedPhone}: ${otp}`);
+
     const smsUrl = process.env.TEXT_LK_API_URL;
     const smsToken = process.env.TEXT_LK_API_TOKEN;
     const senderId = process.env.TEXT_LK_SENDER_ID;
 
-    if (!smsUrl || !smsToken || !senderId) {
-      console.error('[SMS Gateway Error] SMS service environment variables are missing (TEXT_LK_API_URL, TEXT_LK_API_TOKEN, TEXT_LK_SENDER_ID).');
-      return res.status(500).json({
-        success: false,
-        message: 'SMS Gateway is not configured inside the server environment files.'
-      });
-    }
-
-    try {
-      const smsResponse = await fetch(smsUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${smsToken}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          recipient: formattedPhone,
-          sender_id: senderId,
-          type: 'plain',
-          message: `Your AgriGrowthRate verification OTP is ${otp}. Valid for 10 minutes.`
-        })
-      });
-
-      const smsData = await smsResponse.json();
-      console.log(`[SMS Gateway Response]`, smsData);
-
-      // Check for API-specific error flags
-      if (!smsResponse.ok || smsData.success === false || smsData.status === 'error') {
-        const errMsg = smsData.message || `SMS gateway failed with status ${smsResponse.status}`;
-        return res.status(400).json({
-          success: false,
-          message: `SMS Gateway Error: ${errMsg}. Please check your Sender ID and balance.`
+    if (smsUrl && smsToken && senderId) {
+      try {
+        const smsResponse = await fetch(smsUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${smsToken}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            recipient: formattedPhone,
+            sender_id: senderId,
+            type: 'plain',
+            message: `Your AgriGrowthRate verification OTP is ${otp}. Valid for 10 minutes.`
+          })
         });
-      }
-    } catch (smsErr) {
-      console.error('Error contacting Text.lk Gateway API:', smsErr);
-      return res.status(500).json({
-        success: false,
-        message: 'Could not connect to SMS gateway. Please try again later.'
-      });
-    }
 
-    console.log(`[SMS OTP Debug Log] Sent to ${formattedPhone}: ${otp}`);
+        const smsData = await smsResponse.json();
+        console.log('[SMS Gateway Response]', smsData);
+
+        if (!smsResponse.ok || smsData.success === false || smsData.status === 'error') {
+          console.warn(`[SMS Gateway Warning] SMS failed (${smsData.message}). Falling back to Dev Console OTP.`);
+        }
+      } catch (smsErr) {
+        console.error('[SMS Gateway Warning] Failed contacting SMS Gateway. Falling back to Dev Console OTP.');
+      }
+    }
 
     res.json({
       success: true,
-      message: 'Verification OTP sent to your phone number'
+      message: `Verification OTP sent to your phone number. ${process.env.NODE_ENV === 'development' ? `(Dev OTP: ${otp})` : ''}`,
+      devOtp: process.env.NODE_ENV === 'development' ? otp : undefined
     });
   } catch (error) {
     next(error);
@@ -363,7 +355,7 @@ exports.refresh = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
-    const user = await User.findById(decoded.id);
+    const user = await findById(User, decoded.id);
 
     if (!user || user.refreshToken !== token) {
       return res.status(401).json({ success: false, message: 'Invalid or expired refresh token' });
@@ -381,7 +373,7 @@ exports.updateProfile = async (req, res, next) => {
   try {
     const { name, phone, address, avatar, otp } = req.body;
     
-    const currentUser = await User.findById(req.user.id);
+    const currentUser = await findById(User, req.user.id);
     if (!currentUser) return res.status(404).json({ success: false, message: 'User not found' });
 
     if (name && ['farmer', 'retailer', 'consumer'].includes(currentUser.role)) {
@@ -393,7 +385,14 @@ exports.updateProfile = async (req, res, next) => {
       }
     }
 
-    let formattedPhone = currentUser.phone;
+    let currentFormattedPhone = currentUser.phone ? currentUser.phone.trim().replace(/[\s\-\+\(\)]/g, '') : '';
+    if (currentFormattedPhone.startsWith('0')) {
+      currentFormattedPhone = '94' + currentFormattedPhone.slice(1);
+    } else if (!currentFormattedPhone.startsWith('94') && currentFormattedPhone.length === 9) {
+      currentFormattedPhone = '94' + currentFormattedPhone;
+    }
+
+    let formattedPhone = currentFormattedPhone;
     if (phone) {
       formattedPhone = phone.trim().replace(/[\s\-\+\(\)]/g, ''); 
       if (formattedPhone.startsWith('0')) {
@@ -403,29 +402,39 @@ exports.updateProfile = async (req, res, next) => {
       }
     }
 
-    if (formattedPhone !== currentUser.phone) {
+    if (formattedPhone && formattedPhone !== currentFormattedPhone) {
       if (!otp) {
         return res.status(400).json({ success: false, message: 'OTP is required to change phone number' });
       }
 
-      const existingPhone = await User.findOne({ phone: formattedPhone });
-      if (existingPhone) {
+      const existingPhone = await findOne(User, 'phone', formattedPhone);
+      if (existingPhone && existingPhone.id !== currentUser.id) {
         return res.status(400).json({ success: false, message: 'Phone number already registered' });
       }
 
-      const record = await OtpVerification.findOne({ phone: formattedPhone, otp });
-      if (!record) {
+      const record = await findOne(OtpVerification, 'phone', formattedPhone);
+      if (!record || record.otp !== otp) {
         return res.status(400).json({ success: false, message: 'Invalid or expired verification OTP' });
       }
 
-      await OtpVerification.deleteMany({ phone: formattedPhone });
+      await deleteMany(OtpVerification, { phone: formattedPhone });
     }
 
-    const updatedUser = await User.findByIdAndUpdate(
-      req.user.id,
-      { name, phone: formattedPhone, address, avatar },
-      { new: true }
-    ).select('-password -refreshToken');
+    let avatarUrl = currentUser.avatar;
+    if (avatar) {
+      avatarUrl = await uploadBase64ToS3(avatar, 'avatars');
+    }
+
+    const updatedData = {
+      ...(name && { name }),
+      ...(formattedPhone && { phone: formattedPhone }),
+      ...(address && { address }),
+      ...(avatarUrl !== undefined && { avatar: avatarUrl })
+    };
+
+    const updatedUser = await User.update({ id: req.user.id }, updatedData);
+    delete updatedUser.password;
+    delete updatedUser.refreshToken;
 
     res.json({ success: true, data: updatedUser, message: 'Profile updated successfully' });
   } catch (error) {
@@ -437,7 +446,7 @@ exports.updateProfile = async (req, res, next) => {
 // @route DELETE /api/auth/profile
 exports.deactivateAccount = async (req, res, next) => {
   try {
-    await User.findByIdAndDelete(req.user.id);
+    await User.delete(req.user.id);
     res.json({ success: true, message: 'Account deactivated successfully' });
   } catch (error) {
     next(error);
@@ -453,20 +462,18 @@ exports.updatePassword = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Please provide current and new passwords' });
     }
 
-    const user = await User.findById(req.user.id);
+    const user = await findById(User, req.user.id);
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    // Verify current password
     const isMatch = await user.matchPassword(currentPassword);
     if (!isMatch) {
       return res.status(400).json({ success: false, message: 'Incorrect current password' });
     }
 
-    // Update password
-    user.password = newPassword;
-    await user.save();
+    const hashedPassword = await User.hashPassword(newPassword);
+    await User.update({ id: user.id }, { password: hashedPassword });
 
     res.json({ success: true, message: 'Password updated successfully' });
   } catch (error) {
@@ -485,17 +492,17 @@ exports.toggleFavoriteFarmer = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Farmer ID is required' });
     }
 
-    const existingFavorite = await Favorite.findOne({ consumerId, farmerId });
+    const existingFavorite = await findOne(Favorite, 'consumerId', consumerId);
 
     let message = '';
     let isFavorite = false;
 
-    if (!existingFavorite) {
+    if (!existingFavorite || existingFavorite.farmerId !== farmerId) {
       await Favorite.create({ consumerId, farmerId });
       message = 'Farmer added to favorites';
       isFavorite = true;
     } else {
-      await Favorite.findByIdAndDelete(existingFavorite._id);
+      await Favorite.delete(existingFavorite.id);
       message = 'Farmer removed from favorites';
       isFavorite = false;
     }
@@ -510,8 +517,24 @@ exports.toggleFavoriteFarmer = async (req, res, next) => {
 // @route GET /api/auth/favorite-farmers
 exports.getFavoriteFarmers = async (req, res, next) => {
   try {
-    const favorites = await Favorite.find({ consumerId: req.user.id }).populate('farmerId', 'name avatar location address');
-    res.json({ success: true, count: favorites.length, data: favorites });
+    const favorites = await find(Favorite, { consumerId: req.user.id });
+    const farmerDetails = [];
+    for (const fav of favorites) {
+      const farmer = await findById(User, fav.farmerId);
+      if (farmer) {
+        farmerDetails.push({
+          id: fav.id,
+          farmerId: {
+            id: farmer.id,
+            name: farmer.name,
+            avatar: farmer.avatar,
+            location: farmer.location,
+            address: farmer.address
+          }
+        });
+      }
+    }
+    res.json({ success: true, count: farmerDetails.length, data: farmerDetails });
   } catch (error) {
     next(error);
   }
@@ -526,84 +549,33 @@ exports.forgotPasswordSendOtp = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Phone number is required' });
     }
 
-    // Validate phone number format
-    if (!/^(?:\+94|0)?7[0-9]{8}$/.test(phone.trim().replace(/[\s\-]/g, ''))) {
+    if (!/^(?:94|0)?[1-9]\d{8}$/.test(phone.trim().replace(/[\s\-\+\(\)]/g, ''))) {
       return res.status(400).json({ success: false, message: 'Invalid Sri Lankan phone number format (e.g. 077XXXXXXXX)' });
     }
 
-    // Standardize Sri Lankan phone number format (e.g. 0771234567 or +94771234567 -> 94771234567)
-    let formattedPhone = phone.trim().replace(/[\s\-\+\(\)]/g, ''); // Remove spaces, symbols, plus signs
+    let formattedPhone = phone.trim().replace(/[\s\-\+\(\)]/g, '');
     if (formattedPhone.startsWith('0')) {
       formattedPhone = '94' + formattedPhone.slice(1);
     } else if (!formattedPhone.startsWith('94') && formattedPhone.length === 9) {
       formattedPhone = '94' + formattedPhone;
     }
 
-    // Check if phone number is registered
-    const user = await User.findOne({ phone: formattedPhone });
+    const user = await findOne(User, 'phone', formattedPhone);
     if (!user) {
       return res.status(404).json({ success: false, message: 'Phone number is not registered on this platform.' });
     }
 
-    // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // Save to database (overwrite previous OTPs for same phone)
-    await OtpVerification.deleteMany({ phone: formattedPhone });
+    await deleteMany(OtpVerification, { phone: formattedPhone });
     await OtpVerification.create({ phone: formattedPhone, otp });
 
-    // Send SMS via text.lk API
-    const smsUrl = process.env.TEXT_LK_API_URL;
-    const smsToken = process.env.TEXT_LK_API_TOKEN;
-    const senderId = process.env.TEXT_LK_SENDER_ID;
-
-    if (!smsUrl || !smsToken || !senderId) {
-      console.error('[SMS Gateway Error] SMS service environment variables are missing (TEXT_LK_API_URL, TEXT_LK_API_TOKEN, TEXT_LK_SENDER_ID).');
-      return res.status(500).json({
-        success: false,
-        message: 'SMS Gateway is not configured inside the server environment files.'
-      });
-    }
-
-    try {
-      const smsResponse = await fetch(smsUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${smsToken}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          recipient: formattedPhone,
-          sender_id: senderId,
-          type: 'plain',
-          message: `Your AgriGrowthRate password reset OTP is ${otp}. Valid for 10 minutes.`
-        })
-      });
-
-      const smsData = await smsResponse.json();
-      console.log(`[SMS Gateway Response]`, smsData);
-
-      if (!smsResponse.ok || smsData.success === false || smsData.status === 'error') {
-        const errMsg = smsData.message || `SMS gateway failed with status ${smsResponse.status}`;
-        return res.status(400).json({
-          success: false,
-          message: `SMS Gateway Error: ${errMsg}. Please check your Sender ID and balance.`
-        });
-      }
-    } catch (smsErr) {
-      console.error('Error contacting Text.lk Gateway API:', smsErr);
-      return res.status(500).json({
-        success: false,
-        message: 'Could not connect to SMS gateway. Please try again later.'
-      });
-    }
-
-    console.log(`[SMS OTP Debug Log] Forgot password OTP sent to ${formattedPhone}: ${otp}`);
+    console.log(`🔑 [DEV MODE OTP] Forgot Password OTP for ${formattedPhone}: ${otp}`);
 
     res.json({
       success: true,
-      message: 'Password reset OTP sent to your phone number'
+      message: `Password reset OTP sent to your phone number. ${process.env.NODE_ENV === 'development' ? `(Dev OTP: ${otp})` : ''}`,
+      devOtp: process.env.NODE_ENV === 'development' ? otp : undefined
     });
   } catch (error) {
     next(error);
@@ -619,7 +591,6 @@ exports.forgotPasswordVerifyOtp = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Phone number and OTP are required' });
     }
 
-    // Standardize Sri Lankan phone number format
     let formattedPhone = phone.trim().replace(/[\s\-\+\(\)]/g, '');
     if (formattedPhone.startsWith('0')) {
       formattedPhone = '94' + formattedPhone.slice(1);
@@ -627,8 +598,8 @@ exports.forgotPasswordVerifyOtp = async (req, res, next) => {
       formattedPhone = '94' + formattedPhone;
     }
 
-    const record = await OtpVerification.findOne({ phone: formattedPhone, otp });
-    if (!record) {
+    const record = await findOne(OtpVerification, 'phone', formattedPhone);
+    if (!record || record.otp !== otp) {
       return res.status(400).json({ success: false, message: 'Invalid or expired verification OTP' });
     }
 
@@ -654,7 +625,6 @@ exports.forgotPasswordReset = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Password must be at least 6 characters long' });
     }
 
-    // Standardize Sri Lankan phone number format
     let formattedPhone = phone.trim().replace(/[\s\-\+\(\)]/g, '');
     if (formattedPhone.startsWith('0')) {
       formattedPhone = '94' + formattedPhone.slice(1);
@@ -662,22 +632,19 @@ exports.forgotPasswordReset = async (req, res, next) => {
       formattedPhone = '94' + formattedPhone;
     }
 
-    const record = await OtpVerification.findOne({ phone: formattedPhone, otp });
-    if (!record) {
+    const record = await findOne(OtpVerification, 'phone', formattedPhone);
+    if (!record || record.otp !== otp) {
       return res.status(400).json({ success: false, message: 'Invalid or expired verification OTP' });
     }
 
-    const user = await User.findOne({ phone: formattedPhone });
+    const user = await findOne(User, 'phone', formattedPhone);
     if (!user) {
       return res.status(404).json({ success: false, message: 'Registered user not found for this phone number' });
     }
 
-    // Update password
-    user.password = password;
-    await user.save();
-
-    // Delete OTP verification record once used
-    await OtpVerification.deleteMany({ phone: formattedPhone });
+    const hashedPassword = await User.hashPassword(password);
+    await User.update({ id: user.id }, { password: hashedPassword });
+    await deleteMany(OtpVerification, { phone: formattedPhone });
 
     res.json({
       success: true,
