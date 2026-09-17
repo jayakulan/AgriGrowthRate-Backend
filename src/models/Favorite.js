@@ -1,11 +1,29 @@
-const mongoose = require('mongoose');
+const { dynamoose } = require('../config/awsConfig');
+const { v4: uuidv4 } = require('uuid');
 
-const favoriteSchema = new mongoose.Schema(
+const favoriteSchema = new dynamoose.Schema(
   {
-    consumerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    farmerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    id: {
+      type: String,
+      hashKey: true,
+      default: () => uuidv4()
+    },
+    consumerId: {
+      type: String,
+      required: true,
+      index: {
+        name: 'consumerFavoriteIndex',
+        global: true
+      }
+    },
+    farmerId: { type: String, required: true }
   },
   { timestamps: true }
 );
 
-module.exports = mongoose.model('Favorite', favoriteSchema);
+const Favorite = dynamoose.model('Favorite', favoriteSchema, {
+  create: true,
+  waitForActive: false
+});
+
+module.exports = Favorite;

@@ -19,6 +19,9 @@ const io = new Server(server, {
 });
 
 const Conversation = require('./src/models/Conversation');
+const User = require('./src/models/User');
+const { findById } = require('./src/utils/dbHelpers');
+const { v4: uuidv4 } = require('uuid');
 
 io.on('connection', (socket) => {
   console.log(`[Socket] User connected: ${socket.id}`);
@@ -31,26 +34,30 @@ io.on('connection', (socket) => {
   socket.on('send_message', async (data) => {
     try {
       const { conversationId, senderId, text } = data;
-      
-      const conversation = await Conversation.findById(conversationId);
+      if (!conversationId || !senderId || !text) return;
+
+      const conversation = await findById(Conversation, conversationId);
       if (!conversation) return;
 
+      const senderUser = await findById(User, senderId);
       const newMessage = {
+        id: uuidv4(),
         sender: senderId,
-        text,
+        text: text.trim(),
+        createdAt: new Date().toISOString()
       };
 
-      conversation.messages.push(newMessage);
-      await conversation.save();
+      const updatedMessages = Array.isArray(conversation.messages)
+        ? [...conversation.messages, newMessage]
+        : [newMessage];
 
-      // Get the exact saved message
-      const savedMessage = conversation.messages[conversation.messages.length - 1];
-      
-      // Populate sender manually since it's a subdocument
-      await Conversation.populate(savedMessage, { path: 'sender', select: 'name avatar' });
+      await Conversation.update({ id: conversationId }, { messages: updatedMessages });
 
-      const messageToEmit = savedMessage.toObject();
-      messageToEmit.conversationId = conversationId;
+      const messageToEmit = {
+        ...newMessage,
+        sender: senderUser ? { id: senderUser.id, name: senderUser.name, avatar: senderUser.avatar } : null,
+        conversationId
+      };
 
       // Broadcast to room
       io.to(conversationId).emit('receive_message', messageToEmit);

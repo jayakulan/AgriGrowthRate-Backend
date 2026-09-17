@@ -1,17 +1,19 @@
 const stripeService = require('../services/stripeService');
 const User = require('../models/User');
+const { findById } = require('../utils/dbHelpers');
 
 // @desc Create a checkout session for subscription
 // @route POST /api/subscriptions/create-checkout-session
 exports.createSubscriptionCheckoutSession = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user._id);
+    const user = await findById(User, req.user.id);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
-    // If user doesn't have a Stripe customer ID, we might create one
-    if (!user.stripeCustomerId) {
+    let stripeCustomerId = user.stripeCustomerId;
+    if (!stripeCustomerId) {
       const customer = await stripeService.createCustomer(user.email, user.name);
-      user.stripeCustomerId = customer.id;
-      await user.save();
+      stripeCustomerId = customer.id;
+      await User.update({ id: user.id }, { stripeCustomerId });
     }
 
     const amount = 10; // $10 per month subscription
@@ -39,20 +41,16 @@ exports.createSubscriptionCheckoutSession = async (req, res, next) => {
 // @route POST /api/subscriptions/confirm
 exports.confirmSubscription = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user._id);
-    
-    // Set subscription details
-    user.isSubscribed = true;
-    
-    // Set expiry to 1 month from now
-    const expiry = new Date();
-    expiry.setMonth(expiry.getMonth() + 1);
-    user.subscriptionExpiry = expiry;
+    const user = await findById(User, req.user.id);
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
-    // Reset free chats (though if subscribed it doesn't matter, but good practice)
-    user.freeChatCount = 4;
-    
-    await user.save();
+    const expiryTimestamp = Date.now() + (30 * 24 * 60 * 60 * 1000); // 30 days from now
+
+    await User.update({ id: user.id }, {
+      isSubscribed: true,
+      subscriptionExpiry: expiryTimestamp,
+      freeChatCount: 4
+    });
 
     res.json({ success: true, message: 'Subscription active for 1 month' });
   } catch (error) {

@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const User = require('../models/User');
 
 const generateTokens = (userId) => {
   const accessToken = jwt.sign({ id: userId }, process.env.JWT_SECRET, {
@@ -10,15 +11,16 @@ const generateTokens = (userId) => {
   return { accessToken, refreshToken };
 };
 
-const sendTokenResponse = (user, statusCode, res) => {
-  const { accessToken, refreshToken } = generateTokens(user._id);
+const sendTokenResponse = async (user, statusCode, res) => {
+  const userId = user.id || user._id;
+  const { accessToken, refreshToken } = generateTokens(userId);
 
   // Cookie options
   const accessCookieOptions = {
     expires: new Date(Date.now() + 15 * 60 * 1000), // 15 mins
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    sameSite: 'lax',
     path: '/',
   };
 
@@ -26,7 +28,7 @@ const sendTokenResponse = (user, statusCode, res) => {
     expires: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    sameSite: 'lax',
     path: '/',
   };
 
@@ -34,20 +36,26 @@ const sendTokenResponse = (user, statusCode, res) => {
   res.cookie('jwt', accessToken, accessCookieOptions);
   res.cookie('refreshToken', refreshToken, refreshCookieOptions);
 
-  // Update refresh token in DB
-  user.refreshToken = refreshToken;
-  user.save({ validateBeforeSave: false });
+  // Update refresh token in DynamoDB
+  try {
+    if (userId) {
+      await User.update({ id: userId }, { refreshToken });
+    }
+  } catch (err) {
+    console.error('Error updating refreshToken in DB:', err.message);
+  }
 
   res.status(statusCode).json({
     success: true,
     accessToken,
     refreshToken,
     data: {
-      _id: user._id,
+      id: userId,
+      _id: userId,
       name: user.name,
       email: user.email,
       role: user.role,
-      avatar: user.avatar,
+      avatar: user.avatar || '',
       phone: user.phone || '',
       address: user.address || '',
     }
