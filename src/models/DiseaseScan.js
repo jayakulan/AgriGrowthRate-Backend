@@ -1,27 +1,24 @@
-const mongoose = require('mongoose');
+const { dynamoose } = require('../config/awsConfig');
+const { v4: uuidv4 } = require('uuid');
 
-const diseaseScanSchema = new mongoose.Schema({
+const diseaseScanSchema = new dynamoose.Schema({
+  id: {
+    type: String,
+    hashKey: true,
+    default: () => uuidv4()
+  },
   user: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true,
-  },
-  crop: {
     type: String,
     required: true,
+    index: {
+      name: 'userIndex',
+      global: true
+    }
   },
-  diseaseName: {
-    type: String,
-    required: true,
-  },
-  confidence: {
-    type: Number,
-    required: true,
-  },
-  treatment: {
-    type: String,
-    required: true,
-  },
+  crop: { type: String, required: true },
+  diseaseName: { type: String, required: true },
+  confidence: { type: Number, required: true },
+  treatment: { type: String, required: true },
   image: {
     type: String,
     default: 'https://images.unsplash.com/photo-1592417817098-8f3d6eb19675?w=100&h=100&fit=crop'
@@ -30,4 +27,9 @@ const diseaseScanSchema = new mongoose.Schema({
   timestamps: true
 });
 
-module.exports = mongoose.model('DiseaseScan', diseaseScanSchema);
+const DiseaseScan = dynamoose.model('DiseaseScan', diseaseScanSchema, {
+  create: true,
+  waitForActive: false
+});
+
+module.exports = DiseaseScan;

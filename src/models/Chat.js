@@ -1,19 +1,42 @@
-const mongoose = require('mongoose');
+const { dynamoose } = require('../config/awsConfig');
+const { v4: uuidv4 } = require('uuid');
 
-const messageSchema = new mongoose.Schema({
-  role: { type: String, enum: ['user', 'assistant'], required: true },
+const chatMessageSchema = new dynamoose.Schema({
+  id: { type: String, default: () => uuidv4() },
+  role: { type: String, required: true },
   content: { type: String, required: true },
-  timestamp: { type: Date, default: Date.now },
+  timestamp: { type: Number, default: () => Date.now() }
 });
 
-const chatSchema = new mongoose.Schema(
+const chatSchema = new dynamoose.Schema(
   {
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    id: {
+      type: String,
+      hashKey: true,
+      default: () => uuidv4()
+    },
+    user: {
+      type: String,
+      required: true,
+      index: {
+        name: 'userChatIndex',
+        global: true
+      }
+    },
     title: { type: String, default: 'New Chat' },
-    messages: [messageSchema],
-    context: { type: String, default: 'general' }, // general | crop-disease | weather | recommendation
+    messages: {
+      type: Array,
+      schema: [chatMessageSchema],
+      default: []
+    },
+    context: { type: String, default: 'general' }
   },
   { timestamps: true }
 );
 
-module.exports = mongoose.model('Chat', chatSchema);
+const Chat = dynamoose.model('Chat', chatSchema, {
+  create: true,
+  waitForActive: false
+});
+
+module.exports = Chat;

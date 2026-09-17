@@ -1,50 +1,29 @@
-const mongoose = require('mongoose');
+const { dynamoose } = require('../config/awsConfig');
+const { v4: uuidv4 } = require('uuid');
 
-const contactMessageSchema = new mongoose.Schema(
+const contactMessageSchema = new dynamoose.Schema(
   {
-    firstName: {
+    id: {
       type: String,
-      required: [true, 'First name is required'],
-      trim: true,
-      maxlength: [50, 'First name cannot exceed 50 characters'],
+      hashKey: true,
+      default: () => uuidv4()
     },
-    lastName: {
-      type: String,
-      required: [true, 'Last name is required'],
-      trim: true,
-      maxlength: [50, 'Last name cannot exceed 50 characters'],
-    },
-    email: {
-      type: String,
-      required: [true, 'Email is required'],
-      trim: true,
-      lowercase: true,
-      match: [
-        /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/,
-        'Please enter a valid email address',
-      ],
-    },
-    contactNo: {
-      type: String,
-      required: [true, 'Contact number is required'],
-      trim: true,
-      maxlength: [20, 'Contact number cannot exceed 20 characters'],
-    },
-    message: {
-      type: String,
-      required: [true, 'Message content is required'],
-      trim: true,
-      maxlength: [2000, 'Message cannot exceed 2000 characters'],
-    },
+    firstName: { type: String, required: true },
+    lastName: { type: String, required: true },
+    email: { type: String, required: true },
+    contactNo: { type: String, required: true },
+    message: { type: String, required: true },
     status: {
       type: String,
-      enum: ['unread', 'read', 'resolved'],
-      default: 'unread',
-    },
+      default: 'unread'
+    }
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-module.exports = mongoose.model('ContactMessage', contactMessageSchema);
+const ContactMessage = dynamoose.model('ContactMessage', contactMessageSchema, {
+  create: true,
+  waitForActive: false
+});
+
+module.exports = ContactMessage;

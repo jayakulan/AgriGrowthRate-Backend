@@ -1,32 +1,32 @@
-const mongoose = require('mongoose');
+const { dynamoose } = require('../config/awsConfig');
+const { v4: uuidv4 } = require('uuid');
 
-const notificationSchema = new mongoose.Schema(
+const notificationSchema = new dynamoose.Schema(
   {
+    id: {
+      type: String,
+      hashKey: true,
+      default: () => uuidv4()
+    },
     recipient: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      required: true,
-    },
-    type: {
       type: String,
       required: true,
-      enum: ['product_approval', 'product_rejection', 'other'],
-      default: 'other',
+      index: {
+        name: 'recipientIndex',
+        global: true
+      }
     },
-    title: {
-      type: String,
-      required: true,
-    },
-    message: {
-      type: String,
-      required: true,
-    },
-    read: {
-      type: Boolean,
-      default: false,
-    },
+    type: { type: String, default: 'other' },
+    title: { type: String, required: true },
+    message: { type: String, required: true },
+    read: { type: Boolean, default: false }
   },
   { timestamps: true }
 );
 
-module.exports = mongoose.model('Notification', notificationSchema);
+const Notification = dynamoose.model('Notification', notificationSchema, {
+  create: true,
+  waitForActive: false
+});
+
+module.exports = Notification;

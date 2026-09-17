@@ -1,51 +1,55 @@
-const mongoose = require('mongoose');
 const Product = require('../models/Product');
+const User = require('../models/User');
+const Feedback = require('../models/Feedback');
+const jwt = require('jsonwebtoken');
+const { findById, findOne, find } = require('../utils/dbHelpers');
+const { processImagesToS3 } = require('../utils/s3Helper');
 
 // @desc  Get all products (with optional filters)
 // @route GET /api/products
 exports.getProducts = async (req, res, next) => {
   try {
     const { category, minPrice, maxPrice, search, page = 1, limit = 12 } = req.query;
-    const query = { status: 'Active', isAvailable: true, stock: { $gt: 0 } };
-    if (category) query.category = category;
-    if (minPrice || maxPrice) {
-      query.price = { $gte: Number(minPrice) || 0 };
-      if (maxPrice) query.price.$lte = Number(maxPrice);
-    }
-    if (search) query.name = { $regex: search, $options: 'i' };
+    
+    let products = await find(Product);
 
-    const products = await Product.find(query)
-      .populate('farmer', 'name avatar location address')
-      .skip((page - 1) * limit)
-      .limit(Number(limit))
-      .sort('-createdAt');
-    const total = await Product.countDocuments(query);
-
-    // Compute farmer average rating dynamically
-    const farmerIds = [...new Set(products.map(p => p.farmer && p.farmer._id.toString()).filter(Boolean))];
-    const Feedback = require('../models/Feedback');
-    const ratings = await Feedback.aggregate([
-      { $match: { reviewee: { $in: farmerIds.map(id => new mongoose.Types.ObjectId(id)) }, reviewerRole: 'consumer' } },
-      { $group: { _id: '$reviewee', avgRating: { $avg: '$rating' }, totalReviews: { $sum: 1 } } }
-    ]);
-
-    const ratingMap = {};
-    ratings.forEach(r => {
-      ratingMap[r._id.toString()] = {
-        avgRating: Math.round(r.avgRating * 10) / 10,
-        totalReviews: r.totalReviews
-      };
+    products = products.filter((p) => {
+      if (p.status !== 'Active' || p.isAvailable === false || p.stock <= 0) return false;
+      if (category && category !== 'All' && p.category.toLowerCase() !== category.toLowerCase()) return false;
+      if (minPrice && p.price < Number(minPrice)) return false;
+      if (maxPrice && p.price > Number(maxPrice)) return false;
+      if (search && !p.name.toLowerCase().includes(search.toLowerCase())) return false;
+      return true;
     });
 
-    const productsWithRating = products.map(product => {
-      const prodObj = product.toObject();
-      if (prodObj.farmer) {
-        const ratingInfo = ratingMap[prodObj.farmer._id.toString()] || { avgRating: 0, totalReviews: 0 };
-        prodObj.farmer.avgRating = ratingInfo.avgRating;
-        prodObj.farmer.totalReviews = ratingInfo.totalReviews;
-      }
-      return prodObj;
-    });
+    const total = products.length;
+    const startIndex = (Number(page) - 1) * Number(limit);
+    const paginatedProducts = products.slice(startIndex, startIndex + Number(limit));
+
+    const productsWithRating = await Promise.all(
+      paginatedProducts.map(async (prod) => {
+        const prodObj = { ...prod };
+        const farmer = await findById(User, prod.farmer);
+        if (farmer) {
+          const farmerFeedbacks = await find(Feedback, { reviewee: farmer.id, reviewerRole: 'consumer' });
+          const totalReviews = farmerFeedbacks.length;
+          const avgRating = totalReviews > 0
+            ? Math.round((farmerFeedbacks.reduce((acc, curr) => acc + curr.rating, 0) / totalReviews) * 10) / 10
+            : 0;
+
+          prodObj.farmer = {
+            id: farmer.id,
+            name: farmer.name,
+            avatar: farmer.avatar,
+            location: farmer.location,
+            address: farmer.address,
+            avgRating,
+            totalReviews
+          };
+        }
+        return prodObj;
+      })
+    );
 
     res.json({ success: true, total, page: Number(page), data: productsWithRating });
   } catch (error) {
@@ -58,14 +62,21 @@ exports.getProducts = async (req, res, next) => {
 exports.getMyProducts = async (req, res, next) => {
   try {
     const { category, status, search } = req.query;
-    const query = { farmer: req.user.id };
-    if (category && category !== 'All') query.category = category.toLowerCase();
-    if (status === 'Active') query.isAvailable = true;
-    if (status === 'Out of Stock') { query.stock = 0; query.isAvailable = false; }
-    if (status === 'Draft') query.isAvailable = false;
-    if (search) query.name = { $regex: search, $options: 'i' };
+    let products = await find(Product, { farmer: req.user.id });
 
-    const products = await Product.find(query).sort('-createdAt');
+    if (category && category !== 'All') {
+      products = products.filter(p => p.category.toLowerCase() === category.toLowerCase());
+    }
+    if (status === 'Active') {
+      products = products.filter(p => p.isAvailable === true);
+    }
+    if (status === 'Out of Stock') {
+      products = products.filter(p => p.stock === 0 || p.isAvailable === false);
+    }
+    if (search) {
+      products = products.filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
+    }
+
     res.json({ success: true, total: products.length, data: products });
   } catch (error) {
     next(error);
@@ -76,11 +87,7 @@ exports.getMyProducts = async (req, res, next) => {
 // @route GET /api/products/:id
 exports.getProduct = async (req, res, next) => {
   try {
-    const mongoose = require('mongoose');
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(404).json({ success: false, message: 'Invalid product ID format' });
-    }
-    const product = await Product.findById(req.params.id).populate('farmer', 'name avatar location address phone');
+    const product = await findById(Product, req.params.id);
     if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
     
     if (product.status !== 'Active' || !product.isAvailable) {
@@ -89,9 +96,8 @@ exports.getProduct = async (req, res, next) => {
       if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.split(' ')[1];
         try {
-          const jwt = require('jsonwebtoken');
           const decoded = jwt.verify(token, process.env.JWT_SECRET);
-          if (decoded.id === product.farmer._id.toString() || decoded.role === 'admin') {
+          if (decoded.id === product.farmer || decoded.role === 'admin') {
             isAuthorized = true;
           }
         } catch (err) {
@@ -104,18 +110,25 @@ exports.getProduct = async (req, res, next) => {
       }
     }
 
-    // Attach farmer rating
-    const Feedback = require('../models/Feedback');
-    const ratings = await Feedback.aggregate([
-      { $match: { reviewee: product.farmer._id, reviewerRole: 'consumer' } },
-      { $group: { _id: '$reviewee', avgRating: { $avg: '$rating' }, totalReviews: { $sum: 1 } } }
-    ]);
-    
-    const prodObj = product.toObject();
-    if (prodObj.farmer) {
-      const ratingInfo = ratings[0] || { avgRating: 0, totalReviews: 0 };
-      prodObj.farmer.avgRating = Math.round((ratingInfo.avgRating || 0) * 10) / 10;
-      prodObj.farmer.totalReviews = ratingInfo.totalReviews || 0;
+    const prodObj = { ...product };
+    const farmer = await findById(User, product.farmer);
+    if (farmer) {
+      const farmerFeedbacks = await find(Feedback, { reviewee: farmer.id, reviewerRole: 'consumer' });
+      const totalReviews = farmerFeedbacks.length;
+      const avgRating = totalReviews > 0
+        ? Math.round((farmerFeedbacks.reduce((acc, curr) => acc + curr.rating, 0) / totalReviews) * 10) / 10
+        : 0;
+
+      prodObj.farmer = {
+        id: farmer.id,
+        name: farmer.name,
+        avatar: farmer.avatar,
+        location: farmer.location,
+        address: farmer.address,
+        phone: farmer.phone,
+        avgRating,
+        totalReviews
+      };
     }
 
     res.json({ success: true, data: prodObj });
@@ -128,7 +141,19 @@ exports.getProduct = async (req, res, next) => {
 // @route POST /api/products
 exports.createProduct = async (req, res, next) => {
   try {
-    const product = await Product.create({ ...req.body, farmer: req.user.id });
+    let images = req.files && req.files.length > 0 
+      ? req.files.map(file => file.location || `/uploads/${file.filename}`)
+      : req.body.images || [];
+
+    // Ensure all base64 images are uploaded to AWS S3 and replaced with S3 HTTPS URLs
+    images = await processImagesToS3(images, 'products');
+
+    const product = await Product.create({ 
+      ...req.body, 
+      images,
+      farmer: req.user.id 
+    });
+
     res.status(201).json({ success: true, data: product });
   } catch (error) {
     next(error);
@@ -139,6 +164,11 @@ exports.createProduct = async (req, res, next) => {
 // @route PUT /api/products/:id
 exports.updateProduct = async (req, res, next) => {
   try {
+    const product = await findById(Product, req.params.id);
+    if (!product || (product.farmer !== req.user.id && req.user.role !== 'admin')) {
+      return res.status(404).json({ success: false, message: 'Product not found or unauthorized' });
+    }
+
     const updateData = { ...req.body };
     if (req.user.role === 'farmer') {
       updateData.status = 'Pending Review';
@@ -146,13 +176,18 @@ exports.updateProduct = async (req, res, next) => {
     if (updateData.stock !== undefined && Number(updateData.stock) === 0) {
       updateData.isAvailable = false;
     }
-    const product = await Product.findOneAndUpdate(
-      { _id: req.params.id, farmer: req.user.id },
-      updateData,
-      { new: true, runValidators: true }
-    );
-    if (!product) return res.status(404).json({ success: false, message: 'Product not found or unauthorized' });
-    res.json({ success: true, data: product });
+
+    let images = updateData.images || [];
+    if (req.files && req.files.length > 0) {
+      images = req.files.map(file => file.location || `/uploads/${file.filename}`);
+    }
+
+    if (images.length > 0) {
+      updateData.images = await processImagesToS3(images, 'products');
+    }
+
+    const updatedProduct = await Product.update({ id: req.params.id }, updateData);
+    res.json({ success: true, data: updatedProduct });
   } catch (error) {
     next(error);
   }
@@ -162,8 +197,12 @@ exports.updateProduct = async (req, res, next) => {
 // @route DELETE /api/products/:id
 exports.deleteProduct = async (req, res, next) => {
   try {
-    const product = await Product.findOneAndDelete({ _id: req.params.id, farmer: req.user.id });
-    if (!product) return res.status(404).json({ success: false, message: 'Product not found or unauthorized' });
+    const product = await findById(Product, req.params.id);
+    if (!product || (product.farmer !== req.user.id && req.user.role !== 'admin')) {
+      return res.status(404).json({ success: false, message: 'Product not found or unauthorized' });
+    }
+
+    await Product.delete(req.params.id);
     res.json({ success: true, message: 'Product deleted' });
   } catch (error) {
     next(error);
