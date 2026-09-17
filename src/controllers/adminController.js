@@ -13,6 +13,7 @@ const os = require('os');
 // @route GET /api/admin/analytics
 exports.getDashboardAnalytics = async (req, res, next) => {
   try {
+<<<<<<< HEAD
     const allUsers = await find(User);
     const totalUsers = allUsers.length;
     const farmers = allUsers.filter(u => u.role === 'farmer').length;
@@ -21,6 +22,44 @@ exports.getDashboardAnalytics = async (req, res, next) => {
     
     const activeFarmers = allUsers.filter(u => u.role === 'farmer' && u.isVerified && (u.status || '').toLowerCase() !== 'disabled').length;
     const activeRetailers = allUsers.filter(u => (u.role === 'retailer' || u.role === 'consumer') && u.isVerified && (u.status || '').toLowerCase() !== 'disabled').length;
+=======
+    const totalUsers = await User.countDocuments();
+    const farmers = await User.countDocuments({ role: 'farmer' });
+    const consumers = await User.countDocuments({ role: { $in: ['consumer', 'retailer'] } });
+    const adminCount = await User.countDocuments({ role: 'admin' });
+    
+    const activeFarmers = await User.countDocuments({
+      role: 'farmer',
+      isVerified: true,
+      status: { $ne: 'Disabled' }
+    });
+    const activeRetailers = await User.countDocuments({
+      role: { $in: ['retailer', 'consumer'] },
+      isVerified: true,
+      status: { $ne: 'Disabled' }
+    });
+    const approvedProducts = await Product.countDocuments({
+      $or: [
+        { approvalStatus: { $regex: /^approved$/i } },
+        { status: { $regex: /^active$/i } },
+        { status: { $regex: /^approved$/i } }
+      ]
+    });
+    const deliveredOrders = await Order.countDocuments({
+      $or: [
+        { orderStatus: { $regex: /^delivered$/i } },
+        { status: { $regex: /^delivered$/i } }
+      ]
+    });
+    const allUsers = await find(User);
+    const totalUsers = allUsers.length;
+    const farmers = allUsers.filter(u => u.role === 'farmer').length;
+    const consumers = allUsers.filter(u => u.role === 'consumer').length;
+    const adminCount = allUsers.filter(u => u.role === 'admin').length;
+    
+    const activeFarmers = allUsers.filter(u => u.role === 'farmer' && (u.isVerified || (u.status && u.status.toLowerCase() === 'enabled'))).length;
+    const activeRetailers = allUsers.filter(u => (u.role === 'retailer' || u.role === 'consumer') && (u.isVerified || (u.status && u.status.toLowerCase() === 'enabled'))).length;
+>>>>>>> 78c58c0b4cba07de507af0408fe410a645c0c23b
 
     const allProducts = await find(Product);
     const totalProducts = allProducts.length;
@@ -96,6 +135,7 @@ exports.getAllUsers = async (req, res, next) => {
   try {
     const { role, search, status, page = 1, limit = 10 } = req.query;
     
+<<<<<<< HEAD
     let users = await find(User);
     if (role) {
       if (role === 'consumer' || role === 'retailer') {
@@ -112,6 +152,36 @@ exports.getAllUsers = async (req, res, next) => {
         (u.email && u.email.toLowerCase().includes(s)) ||
         (u.phone && u.phone.toLowerCase().includes(s))
       );
+=======
+    let query = {};
+    if (role) {
+      if (role === 'consumer' || role === 'retailer') {
+        query.role = { $in: ['consumer', 'retailer'] };
+      } else {
+        query.role = role;
+      }
+    }
+    if (status) query.isVerified = status === 'active';
+    if (search) query.$or = [
+      { name: { $regex: search, $options: 'i' } },
+      { email: { $regex: search, $options: 'i' } },
+      { phone: { $regex: search, $options: 'i' } }
+    ];
+
+    const users = await User.find(query)
+      .select('-password -refreshToken')
+      .skip(skip)
+      .limit(Number(limit))
+      .sort({ createdAt: -1 });
+    
+    const total = await User.countDocuments(query);
+    let users = await find(User);
+    if (role) users = users.filter(u => u.role === role);
+    if (status) users = users.filter(u => u.isVerified === (status === 'active'));
+    if (search) {
+      const s = search.toLowerCase();
+      users = users.filter(u => u.name.toLowerCase().includes(s) || u.email.toLowerCase().includes(s));
+>>>>>>> 78c58c0b4cba07de507af0408fe410a645c0c23b
     }
 
     users.forEach(u => {
@@ -385,7 +455,51 @@ exports.getReports = async (req, res, next) => {
       revenueData[month] = (revenueData[month] || 0) + (order.totalAmount || 0);
     });
 
+<<<<<<< HEAD
     const activeUsers = allUsers.filter(u => u.isVerified && (u.status || '').toLowerCase() !== 'disabled').length;
+=======
+    // Category breakdown
+    const categoryData = await Product.aggregate([
+      { $group: { _id: '$category', count: { $sum: 1 }, revenue: { $sum: '$price' } } },
+      { $sort: { count: -1 } }
+    ]);
+
+    // Active Users (enabled farmers + retailers)
+    const activeFarmers = await User.countDocuments({
+      role: 'farmer',
+      isVerified: true,
+      status: { $ne: 'Disabled' }
+    });
+    const activeRetailers = await User.countDocuments({
+      role: { $in: ['retailer', 'consumer'] },
+      isVerified: true,
+      status: { $ne: 'Disabled' }
+    });
+    const activeUsers = activeFarmers + activeRetailers;
+
+    // Products Sold (Sum of quantities of items in completed/delivered/shipping orders)
+    let productsSold = 0;
+    const completedOrders = orders.filter(o =>
+      ['delivered', 'shipping', 'shipped'].includes((o.status || '').toLowerCase())
+    );
+    completedOrders.forEach(order => {
+      if (order.items) {
+        order.items.forEach(item => {
+          productsSold += (item.quantity || 0);
+        });
+      }
+    });
+
+    // Total Orders (delivered + shipping orders)
+    const totalOrdersCount = completedOrders.length;
+
+    // Total Revenue (total delivered order amount)
+    const deliveredOrders = orders.filter(o =>
+      ['delivered'].includes((o.status || '').toLowerCase())
+    );
+    const totalRevenue = deliveredOrders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
+    const activeUsers = allUsers.filter(u => u.isVerified || u.status === 'Enabled').length;
+>>>>>>> 78c58c0b4cba07de507af0408fe410a645c0c23b
     const totalOrdersCount = orders.length;
     const totalRevenue = orders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
 
