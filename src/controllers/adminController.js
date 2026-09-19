@@ -327,9 +327,41 @@ exports.getAllOrders = async (req, res, next) => {
     const startIndex = (Number(page) - 1) * Number(limit);
     const paginated = orders.slice(startIndex, startIndex + Number(limit));
 
+    const populatedOrders = await Promise.all(
+      paginated.map(async (order) => {
+        const consumer = await findById(User, order.consumer);
+        const items = await Promise.all(
+          (order.items || []).map(async (item) => {
+            const pid = typeof item.product === 'object' ? (item.product?.id || item.product?._id) : item.product;
+            const pDoc = await findById(Product, pid);
+            const fallbackName = (typeof item.product === 'object' && item.product?.name)
+              || item.productName
+              || (typeof item.product === 'string' ? item.product : 'N/A');
+
+            return {
+              ...item,
+              product: {
+                id: pid || (pDoc ? pDoc.id : ''),
+                _id: pid || (pDoc ? pDoc.id : ''),
+                name: pDoc ? pDoc.name : fallbackName,
+                price: pDoc ? pDoc.price : (item.price || 0),
+                images: pDoc ? pDoc.images : (typeof item.product === 'object' && item.product?.images ? item.product.images : []),
+                unit: pDoc ? pDoc.unit : (typeof item.product === 'object' && item.product?.unit ? item.product.unit : 'kg')
+              }
+            };
+          })
+        );
+        return {
+          ...order,
+          consumer: consumer ? { id: consumer.id, name: consumer.name, email: consumer.email, phone: consumer.phone } : null,
+          items
+        };
+      })
+    );
+
     res.json({
       success: true,
-      data: paginated,
+      data: populatedOrders,
       counts: {
         delivered: deliveredCount,
         shipping: shippingCount,
