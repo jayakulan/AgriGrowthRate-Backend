@@ -57,10 +57,24 @@ exports.getDashboardAnalytics = async (req, res, next) => {
       farmerGrowth[month] = (farmerGrowth[month] || 0) + 1;
     });
 
+    const farmerDistricts = {};
+    allUsers.filter(u => u.role === 'farmer').forEach(u => {
+      const rawDistrict = (u.address && u.address.trim()) || (u.location && u.location.trim()) || 'Colombo';
+      const district = rawDistrict.charAt(0).toUpperCase() + rawDistrict.slice(1);
+      farmerDistricts[district] = (farmerDistricts[district] || 0) + 1;
+    });
+
     const retailerGrowth = {};
     allUsers.filter(u => u.role === 'retailer' || u.role === 'consumer').forEach(u => {
       const month = new Date(u.createdAt || Date.now()).toLocaleString('default', { month: 'short' }).toUpperCase();
       retailerGrowth[month] = (retailerGrowth[month] || 0) + 1;
+    });
+
+    const retailerDistricts = {};
+    allUsers.filter(u => u.role === 'retailer' || u.role === 'consumer').forEach(u => {
+      const rawDistrict = (u.address && u.address.trim()) || (u.location && u.location.trim()) || 'Colombo';
+      const district = rawDistrict.charAt(0).toUpperCase() + rawDistrict.slice(1);
+      retailerDistricts[district] = (retailerDistricts[district] || 0) + 1;
     });
 
     res.json({
@@ -82,7 +96,9 @@ exports.getDashboardAnalytics = async (req, res, next) => {
           dispatchPercentage
         },
         farmerGrowthTrend: farmerGrowth,
-        retailerGrowthTrend: retailerGrowth
+        farmerDistrictDistribution: farmerDistricts,
+        retailerGrowthTrend: retailerGrowth,
+        retailerDistrictDistribution: retailerDistricts
       },
     });
   } catch (error) {
@@ -429,16 +445,90 @@ exports.updateOrderStatus = async (req, res, next) => {
 exports.getReports = async (req, res, next) => {
   try {
     const allProducts = await find(Product);
-    const topProducts = allProducts.slice(0, 5);
-
     const allUsers = await find(User);
+    const orders = await find(Order);
+
+    // Map products for fast item lookup and sales tracking
+    const prodMap = {};
+    allProducts.forEach(p => {
+      const pId = p.id || p._id;
+      prodMap[pId] = {
+        ...p,
+        id: pId,
+        _id: pId,
+        salesCount: 0,
+        salesRevenue: 0
+      };
+    });
+
+    // 1. Calculate sales by category (Grains, Vegetables, Fruits) from AWS DynamoDB orders
+    const categoryStats = {
+      'Vegetables': { count: 0, revenue: 0 },
+      'Fruits': { count: 0, revenue: 0 },
+      'Grains': { count: 0, revenue: 0 }
+    };
+
+    let totalUnitsSold = 0;
+
+    orders.forEach(order => {
+      const orderStatus = (order.status || order.orderStatus || '').toLowerCase();
+      if (orderStatus === 'cancelled') return;
+
+      (order.items || []).forEach(item => {
+        const pId = item.product || item.id || item._id;
+        const qty = Number(item.quantity) || 1;
+        const price = Number(item.price) || 0;
+        const itemTotal = price * qty;
+        totalUnitsSold += qty;
+
+        if (prodMap[pId]) {
+          prodMap[pId].salesCount = (prodMap[pId].salesCount || 0) + qty;
+          prodMap[pId].salesRevenue = (prodMap[pId].salesRevenue || 0) + itemTotal;
+        }
+
+        // Categorize into Grains, Vegetables, Fruits
+        const p = prodMap[pId];
+        const rawCat = (p?.category || item.category || '').toLowerCase();
+        let normalizedCat = 'Vegetables';
+        if (rawCat.includes('grain') || rawCat.includes('corn') || rawCat.includes('rice')) {
+          normalizedCat = 'Grains';
+        } else if (rawCat.includes('fruit') || rawCat.includes('apple') || rawCat.includes('mango') || rawCat.includes('banana')) {
+          normalizedCat = 'Fruits';
+        } else {
+          normalizedCat = 'Vegetables';
+        }
+
+        categoryStats[normalizedCat].count += qty;
+        categoryStats[normalizedCat].revenue += itemTotal;
+      });
+    });
+
+    // Format category breakdown with percentage share
+    const categoryBreakdown = Object.entries(categoryStats).map(([name, stats]) => {
+      const percentage = totalUnitsSold > 0 ? Math.round((stats.count / totalUnitsSold) * 100) : 0;
+      return {
+        _id: name,
+        name,
+        count: stats.count,
+        revenue: stats.revenue,
+        percentage,
+        value: percentage
+      };
+    }).sort((a, b) => b.value - a.value);
+
+    // 2. Real top performing products ranked by sales count & revenue
+    const topProducts = Object.values(prodMap)
+      .sort((a, b) => (b.salesCount - a.salesCount) || (b.salesRevenue - a.salesRevenue))
+      .slice(0, 5);
+
+    // 3. User growth trajectory
     const userGrowth = {};
     allUsers.forEach(user => {
       const month = new Date(user.createdAt || Date.now()).toLocaleString('default', { month: 'short', year: '2-digit' });
       userGrowth[month] = (userGrowth[month] || 0) + 1;
     });
 
-    const orders = await find(Order);
+    // 4. Revenue data
     const revenueData = {};
     orders.forEach(order => {
       const month = new Date(order.createdAt || Date.now()).toLocaleString('default', { month: 'short', year: '2-digit' });
@@ -455,10 +545,10 @@ exports.getReports = async (req, res, next) => {
         topProducts,
         userGrowth,
         revenueData,
-        categoryBreakdown: [],
+        categoryBreakdown,
         stats: {
           activeUsers,
-          productsSold: totalOrdersCount,
+          productsSold: totalUnitsSold || totalOrdersCount,
           totalOrdersCount,
           totalRevenue
         }
