@@ -6,8 +6,34 @@ const { find, findById } = require('../utils/dbHelpers');
 // @access  Private
 exports.getNotifications = async (req, res, next) => {
   try {
-    const notifications = await find(Notification, { recipient: req.user.id });
-    res.json({ success: true, data: notifications });
+    let notifications = [];
+    if (req.user.role === 'admin') {
+      const allNotifs = await find(Notification);
+      notifications = allNotifs.filter(
+        n => n.recipient === req.user.id || n.recipient === 'admin'
+      );
+    } else {
+      notifications = await find(Notification, { recipient: req.user.id });
+    }
+
+    // Sort descending by createdAt (newest first)
+    notifications.sort((a, b) => {
+      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return dateB - dateA;
+    });
+
+    const formatted = notifications.map(n => {
+      const obj = typeof n.toJSON === 'function' ? n.toJSON() : { ...n };
+      const keyId = obj.id || obj._id;
+      return {
+        ...obj,
+        id: keyId,
+        _id: keyId
+      };
+    });
+
+    res.json({ success: true, data: formatted });
   } catch (error) {
     next(error);
   }
@@ -22,14 +48,31 @@ exports.markAsRead = async (req, res, next) => {
 
     if (id) {
       const notif = await findById(Notification, id);
-      if (notif && notif.recipient === req.user.id) {
-        await Notification.update({ id }, { read: true });
+      if (notif) {
+        const canMark =
+          notif.recipient === req.user.id ||
+          (req.user.role === 'admin' && notif.recipient === 'admin');
+        if (canMark) {
+          await Notification.update({ id }, { read: true });
+        }
       }
     } else {
-      const notifications = await find(Notification, { recipient: req.user.id });
+      let notifications = [];
+      if (req.user.role === 'admin') {
+        const allNotifs = await find(Notification);
+        notifications = allNotifs.filter(
+          n => n.recipient === req.user.id || n.recipient === 'admin'
+        );
+      } else {
+        notifications = await find(Notification, { recipient: req.user.id });
+      }
+
       for (const n of notifications) {
         if (!n.read) {
-          await Notification.update({ id: n.id }, { read: true });
+          const keyId = n.id || n._id;
+          if (keyId) {
+            await Notification.update({ id: keyId }, { read: true });
+          }
         }
       }
     }
@@ -39,3 +82,4 @@ exports.markAsRead = async (req, res, next) => {
     next(error);
   }
 };
+

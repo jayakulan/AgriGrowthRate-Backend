@@ -114,6 +114,23 @@ router.post('/', protect, async (req, res, next) => {
       reviewerRole,
     });
 
+    const { sendNotification } = require('../utils/notificationHelper');
+    // Notify reviewee
+    await sendNotification({
+      recipient: revieweeId,
+      type: 'feedback',
+      title: 'New Rating & Review',
+      message: `You received a ${numericRating}★ rating: "${comment.trim().substring(0, 70)}${comment.trim().length > 70 ? '...' : ''}"`
+    });
+
+    // Notify admin
+    await sendNotification({
+      recipient: 'admin',
+      type: 'feedback',
+      title: 'New Review Submitted',
+      message: `${req.user.name || 'User'} left a ${numericRating}★ rating for order #${order.orderConfirmationNumber || (order.id ? order.id.substring(0, 8) : 'Order')}.`
+    });
+
     res.status(201).json({
       success: true,
       data: feedback,

@@ -31,6 +31,14 @@ exports.submitContactMessage = async (req, res, next) => {
       message: message.trim(),
     });
 
+    const { sendNotification } = require('../utils/notificationHelper');
+    await sendNotification({
+      recipient: 'admin',
+      type: 'contact',
+      title: 'New Customer Inquiry',
+      message: `Inquiry from ${firstName.trim()} ${lastName.trim()} (${contactNo.trim()}): "${message.trim().substring(0, 60)}${message.trim().length > 60 ? '...' : ''}"`
+    });
+
     res.status(201).json({
       success: true,
       message: 'Your message has been sent successfully. We will get back to you soon!',
