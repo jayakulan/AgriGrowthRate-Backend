@@ -147,6 +147,28 @@ router.get('/farmer', protect, async (req, res, next) => {
       }) : [];
       if (relevantItems.length > 0) {
         const consumer = await findById(User, order.consumer);
+        const populatedItems = await Promise.all(
+          relevantItems.map(async (item) => {
+            const pid = typeof item.product === 'object' ? (item.product?.id || item.product?._id) : item.product;
+            const pDoc = await findById(Product, pid);
+            const fallbackName = (typeof item.product === 'object' && item.product?.name)
+              || item.productName
+              || (typeof item.product === 'string' ? item.product : 'N/A');
+
+            return {
+              ...item,
+              product: {
+                id: pid || (pDoc ? pDoc.id : ''),
+                _id: pid || (pDoc ? pDoc.id : ''),
+                name: pDoc ? pDoc.name : fallbackName,
+                price: pDoc ? pDoc.price : (item.price || 0),
+                images: pDoc ? pDoc.images : (typeof item.product === 'object' && item.product?.images ? item.product.images : []),
+                unit: pDoc ? pDoc.unit : (typeof item.product === 'object' && item.product?.unit ? item.product.unit : 'kg')
+              }
+            };
+          })
+        );
+
         farmerOrders.push({
           ...order,
           consumer: consumer ? {
@@ -156,7 +178,7 @@ router.get('/farmer', protect, async (req, res, next) => {
             avatar: consumer.avatar,
             phone: consumer.phone
           } : null,
-          items: relevantItems
+          items: populatedItems
         });
       }
     }
@@ -181,15 +203,21 @@ router.get('/my-orders', protect, async (req, res, next) => {
       orders.map(async (order) => {
         const items = await Promise.all(
           (order.items || []).map(async (item) => {
-            const product = await findById(Product, item.product);
+            const pid = typeof item.product === 'object' ? (item.product?.id || item.product?._id) : item.product;
+            const product = await findById(Product, pid);
+            const fallbackName = (typeof item.product === 'object' && item.product?.name)
+              || item.productName
+              || (typeof item.product === 'string' ? item.product : 'N/A');
+
             return {
               ...item,
-              product: product ? {
-                id: product.id,
-                name: product.name,
-                price: product.price,
-                images: product.images
-              } : null
+              product: {
+                id: pid || (product ? product.id : ''),
+                _id: pid || (product ? product.id : ''),
+                name: product ? product.name : fallbackName,
+                price: product ? product.price : (item.price || 0),
+                images: product ? product.images : (typeof item.product === 'object' && item.product?.images ? item.product.images : [])
+              }
             };
           })
         );
