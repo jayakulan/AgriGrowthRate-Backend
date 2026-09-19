@@ -128,6 +128,14 @@ exports.register = async (req, res, next) => {
       isVerified: true, 
       farmerCardNo: role === 'farmer' ? farmerCardNo.trim() : '' 
     });
+
+    const { sendNotification } = require('../utils/notificationHelper');
+    await sendNotification({
+      recipient: 'admin',
+      type: 'user_registration',
+      title: 'New User Registered',
+      message: `New ${userRole} "${name.trim()}" (${normalizedEmail}) registered from ${address.trim()}.`
+    });
     
     sendTokenResponse(user, 201, res);
   } catch (error) {

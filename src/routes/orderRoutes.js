@@ -6,6 +6,7 @@ const Product = require('../models/Product');
 const User = require('../models/User');
 const Conversation = require('../models/Conversation');
 const { findById, find } = require('../utils/dbHelpers');
+const { sendNotification } = require('../utils/notificationHelper');
 
 // @desc  Create order
 // @route POST /api/orders
@@ -88,6 +89,33 @@ router.post('/', protect, async (req, res, next) => {
       }
     }
 
+    // ── Dispatch notifications ──
+    // 1. Notify Consumer
+    await sendNotification({
+      recipient: req.user.id,
+      type: 'order',
+      title: 'Order Placed Successfully',
+      message: `Your order #${confirmNum} for Rs ${totalAmount.toLocaleString()} has been placed.`
+    });
+
+    // 2. Notify Farmers
+    for (const farmerId of farmerIds) {
+      await sendNotification({
+        recipient: farmerId,
+        type: 'order',
+        title: 'New Order Received',
+        message: `You received a new order #${confirmNum}. Please check your orders page to prepare delivery.`
+      });
+    }
+
+    // 3. Notify Admin
+    await sendNotification({
+      recipient: 'admin',
+      type: 'order',
+      title: 'New Platform Order',
+      message: `Order #${confirmNum} placed by ${req.user.name || 'Customer'} for Rs ${totalAmount.toLocaleString()}.`
+    });
+
     if (req.user.phone) {
       const smsUrl = process.env.TEXT_LK_API_URL;
       const smsToken = process.env.TEXT_LK_API_TOKEN;
@@ -106,7 +134,7 @@ router.post('/', protect, async (req, res, next) => {
               recipient: req.user.phone,
               sender_id: senderId,
               type: 'plain',
-              message: `Your AgriGrowthRate order has been placed successfully! Confirmation Number: ${confirmNum}. Total: $${totalAmount.toFixed(2)}`
+              message: `Your AgriGrowthRate order has been placed successfully! Confirmation Number: ${confirmNum}. Total: Rs ${totalAmount.toFixed(2)}`
             })
           });
         } catch (smsErr) {
@@ -171,6 +199,8 @@ router.get('/farmer', protect, async (req, res, next) => {
 
         farmerOrders.push({
           ...order,
+          id: order.id || order._id,
+          _id: order.id || order._id,
           consumer: consumer ? {
             id: consumer.id,
             name: consumer.name,
@@ -260,6 +290,24 @@ router.put('/:id/status', protect, async (req, res, next) => {
 
     const updated = await Order.update({ id: req.params.id }, updateFields);
 
+    // Notifications
+    const orderNum = order.orderConfirmationNumber || (order.id ? order.id.substring(0, 8) : 'Order');
+    if (order.consumer) {
+      await sendNotification({
+        recipient: order.consumer,
+        type: 'order_status',
+        title: `Order ${status.charAt(0).toUpperCase() + status.slice(1)}`,
+        message: `Your order #${orderNum} status has been updated to "${status}".`
+      });
+    }
+
+    await sendNotification({
+      recipient: 'admin',
+      type: 'order_status',
+      title: 'Order Status Updated',
+      message: `Order #${orderNum} status was updated to "${status}".`
+    });
+
     res.json({
       success: true,
       data: updated,
@@ -294,6 +342,24 @@ router.put('/:id/cancel', protect, async (req, res, next) => {
     }
 
     const updated = await Order.update({ id: req.params.id }, { status: 'cancelled' });
+
+    // Notifications
+    const orderNum = order.orderConfirmationNumber || (order.id ? order.id.substring(0, 8) : 'Order');
+    if (order.consumer) {
+      await sendNotification({
+        recipient: order.consumer,
+        type: 'order_cancelled',
+        title: 'Order Cancelled',
+        message: `Your order #${orderNum} has been cancelled.`
+      });
+    }
+
+    await sendNotification({
+      recipient: 'admin',
+      type: 'order_cancelled',
+      title: 'Order Cancelled',
+      message: `Order #${orderNum} was cancelled and stock has been restored.`
+    });
 
     res.json({
       success: true,

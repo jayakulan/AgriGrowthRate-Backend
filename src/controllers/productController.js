@@ -154,6 +154,23 @@ exports.createProduct = async (req, res, next) => {
       farmer: req.user.id 
     });
 
+    const { sendNotification } = require('../utils/notificationHelper');
+    // Notify Admin of product submission
+    await sendNotification({
+      recipient: 'admin',
+      type: 'product_submission',
+      title: 'New Product Submitted',
+      message: `${req.user.name || 'A farmer'} submitted a new product "${product.name}" (${product.category || 'produce'}) for review.`
+    });
+
+    // Notify Farmer of receipt
+    await sendNotification({
+      recipient: req.user.id,
+      type: 'product_submission',
+      title: 'Product Submitted for Approval',
+      message: `Your product "${product.name}" has been submitted and is currently pending admin review.`
+    });
+
     res.status(201).json({ success: true, data: product });
   } catch (error) {
     next(error);

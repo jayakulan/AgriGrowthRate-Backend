@@ -110,6 +110,13 @@ exports.deleteKnowledgeBase = async (req, res, next) => {
 exports.saveAssessment = async (req, res, next) => {
   try {
     let { crop, diseaseName, confidence, treatment, image } = req.body;
+
+    if (typeof confidence === 'number' && confidence < 40) {
+      return res.status(400).json({
+        success: false,
+        message: 'Assessment rejected: Confidence score is below 40% threshold. Unreliable or non-crop image.'
+      });
+    }
     
     let imageUrl = image;
     if (image) {

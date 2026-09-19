@@ -330,6 +330,9 @@ exports.getAllOrders = async (req, res, next) => {
     const populatedOrders = await Promise.all(
       paginated.map(async (order) => {
         const consumer = await findById(User, order.consumer);
+        let orderFarmerName = '';
+        let orderFarmer = null;
+
         const items = await Promise.all(
           (order.items || []).map(async (item) => {
             const pid = typeof item.product === 'object' ? (item.product?.id || item.product?._id) : item.product;
@@ -337,6 +340,23 @@ exports.getAllOrders = async (req, res, next) => {
             const fallbackName = (typeof item.product === 'object' && item.product?.name)
               || item.productName
               || (typeof item.product === 'string' ? item.product : 'N/A');
+
+            let farmerDoc = null;
+            let fName = pDoc?.farmerName || '';
+            const farmerId = pDoc?.farmer || (typeof item.product === 'object' ? item.product?.farmer : null);
+            if (farmerId) {
+              farmerDoc = await findById(User, farmerId);
+              if (farmerDoc && farmerDoc.name) {
+                fName = farmerDoc.name;
+              }
+            }
+
+            if (!orderFarmerName && fName) {
+              orderFarmerName = fName;
+              orderFarmer = farmerDoc
+                ? { id: farmerDoc.id, name: farmerDoc.name, email: farmerDoc.email, phone: farmerDoc.phone }
+                : { name: fName };
+            }
 
             return {
               ...item,
@@ -346,14 +366,22 @@ exports.getAllOrders = async (req, res, next) => {
                 name: pDoc ? pDoc.name : fallbackName,
                 price: pDoc ? pDoc.price : (item.price || 0),
                 images: pDoc ? pDoc.images : (typeof item.product === 'object' && item.product?.images ? item.product.images : []),
-                unit: pDoc ? pDoc.unit : (typeof item.product === 'object' && item.product?.unit ? item.product.unit : 'kg')
+                unit: pDoc ? pDoc.unit : (typeof item.product === 'object' && item.product?.unit ? item.product.unit : 'kg'),
+                farmer: farmerDoc
+                  ? { id: farmerDoc.id, name: farmerDoc.name, email: farmerDoc.email, phone: farmerDoc.phone }
+                  : (fName ? { name: fName } : null),
+                farmerName: fName
               }
             };
           })
         );
         return {
           ...order,
+          id: order.id || order._id,
+          _id: order.id || order._id,
           consumer: consumer ? { id: consumer.id, name: consumer.name, email: consumer.email, phone: consumer.phone } : null,
+          farmer: orderFarmer,
+          farmerName: orderFarmerName || 'Farmer',
           items
         };
       })
