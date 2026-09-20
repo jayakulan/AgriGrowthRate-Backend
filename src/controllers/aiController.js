@@ -172,7 +172,10 @@ exports.chatWithAI = async (req, res, next) => {
   try {
     const { messages } = req.body;
     const user = await findById(User, req.user.id);
-    const currentFreeCount = typeof user.freeChatCount === 'number' ? user.freeChatCount : 5;
+    let currentFreeCount = user.freeChatCount;
+    if (currentFreeCount === undefined || currentFreeCount === null || isNaN(currentFreeCount)) {
+      currentFreeCount = 4;
+    }
 
     if (!user.isSubscribed && currentFreeCount <= 0) {
       return res.status(402).json({ 
